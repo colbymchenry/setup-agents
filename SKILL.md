@@ -783,28 +783,15 @@ echo "INSTRUCTION: This git context has already been fetched for you. Use it dir
 echo ""
 echo "Branch: $BRANCH"
 
-MAX_LINES=30
-
 if [ -n "$BRANCH_COMMITS" ]; then
   # Feature branch with commits — show branch-specific work
   COMMIT_COUNT=$(echo "$BRANCH_COMMITS" | wc -l | tr -d ' ')
   echo ""
   echo "Branch commits ($COMMIT_COUNT commits since $BASE):"
-  if [ "$COMMIT_COUNT" -gt "$MAX_LINES" ]; then
-    echo "$BRANCH_COMMITS" | head -$MAX_LINES
-    echo "  ... and $((COMMIT_COUNT - MAX_LINES)) more commits"
-  else
-    echo "$BRANCH_COMMITS"
-  fi
+  echo "$BRANCH_COMMITS"
   echo ""
   echo "Files changed on this branch:"
-  STAT_LINES=$(echo "$BRANCH_DIFF_STAT" | wc -l | tr -d ' ')
-  if [ "$STAT_LINES" -gt "$MAX_LINES" ]; then
-    echo "$BRANCH_DIFF_STAT" | tail -1  # summary line (e.g., "50 files changed, ...")
-    echo "  (showing summary only — $STAT_LINES files changed)"
-  else
-    echo "$BRANCH_DIFF_STAT"
-  fi
+  echo "$BRANCH_DIFF_STAT"
 else
   # No branch-specific commits — show recent history
   if [ "$BRANCH" = "$BASE" ] || [ -z "$BASE" ]; then
@@ -823,14 +810,8 @@ fi
 if [ -n "$STATUS" ]; then
   CHANGED=$(echo "$STATUS" | wc -l | tr -d ' ')
   echo ""
-  if [ "$CHANGED" -gt "$MAX_LINES" ]; then
-    echo "Working directory ($CHANGED changed files — showing first $MAX_LINES):"
-    echo "$STATUS" | head -$MAX_LINES
-    echo "  ... and $((CHANGED - MAX_LINES)) more files"
-  else
-    echo "Working directory ($CHANGED changed files):"
-    echo "$STATUS"
-  fi
+  echo "Working directory ($CHANGED changed files):"
+  echo "$STATUS"
 fi
 
 echo "=== End Git Context ==="
