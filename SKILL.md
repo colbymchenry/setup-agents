@@ -652,6 +652,63 @@ If the user selected extras in Batch 4 Q4, generate those too following the same
 
 ---
 
+### Update Project CLAUDE.md — CRITICAL
+
+After generating all agent files, you **MUST** update the project's `CLAUDE.md` with agent workflow instructions. **Without this, fresh Claude Code sessions will ignore the agents and act as a generalist — defeating the entire purpose of setup-agents.**
+
+This is what makes the agents actually get used. The `description` field in agent frontmatter helps, but it is not reliable enough on its own. Explicit instructions in CLAUDE.md are loaded into every session and ensure Claude delegates properly.
+
+#### Steps
+
+1. Read the existing `CLAUDE.md` in the project root. If none exists, create one.
+2. Check if an `## Agent Workflow` section already exists — if so, replace it entirely.
+3. Add the agent workflow section **at the very top of the file**, before all other content. This ensures Claude sees it first in every session.
+
+#### What to write
+
+Tailor the content to match the agents that were actually generated. Use this as a template — do NOT copy it verbatim. Fill in the project's actual agent names, test framework, review priorities, viewports, and any custom agents:
+
+```markdown
+## Agent Workflow
+
+This project uses specialized AI agents in `.claude/agents/`. **ALWAYS delegate to the appropriate agent rather than doing work directly.**
+
+| Step | Agent | Purpose | Invoke |
+|------|-------|---------|--------|
+| 1 | **architect** | Plan before implementing — scope affected files, trade-offs, risks | `@architect` |
+| 2 | **coder** | Write/edit code following project conventions and the architect's plan | `@coder` |
+| 3 | **reviewer** | Review the diff for {review priorities from Batch 2 Q1} | `@reviewer` |
+| 4 | **tester** | Write and run {test framework} tests for affected files | `@tester` |
+| 5 | **design-qa** | Visual QA — screenshot at {viewports} and inspect | `@design-qa` |
+
+### Workflow
+
+For any feature, bug fix, or significant change:
+
+1. **Plan** → `@architect` analyzes the request, identifies affected files, and produces an implementation plan
+2. **Implement** → `@coder` writes code following the architect's plan and project conventions
+3. **Review** → `@reviewer` checks the diff for issues
+4. **Test** → `@tester` writes/updates tests and runs them until green
+5. **Visual QA** → `@design-qa` screenshots affected pages and inspects (UI changes only)
+
+**Always start with the architect.** Even for seemingly simple changes, the architect identifies affected files, edge cases, and test requirements that are easy to miss when jumping straight to code.
+
+### When NOT to delegate
+
+- Quick questions about the codebase (just answer directly)
+- Reading/explaining code (just read and explain)
+- Git operations, deployments, or config changes (handle directly)
+```
+
+#### Adjustments
+
+- **Backend-only projects:** Remove the design-qa row and step 5. Remove the "UI changes only" note.
+- **Custom agents:** Add rows for any extra agents generated from Batch 4 Q4 (e.g., shopify-expert, security, devops).
+- **Fill in specifics:** Replace `{review priorities}`, `{test framework}`, and `{viewports}` with the actual values from the interview.
+- **Preserve existing content:** When a CLAUDE.md already exists, keep all existing sections intact below the new agent workflow section.
+
+---
+
 ## Phase 4: Verify
 
 After generating all agents, use AskUserQuestion:
