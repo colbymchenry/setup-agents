@@ -142,15 +142,16 @@ Agents only work if Claude actually uses them. Setup Agents solves this with thr
 | Layer | When | What it does |
 |:------|:-----|:-------------|
 | **CLAUDE.md** | Loaded every session | Agent workflow table + delegation instructions |
-| **`git-context.sh`** | Session start | Injects branch-aware git history + uncommitted changes |
+| **`git-context.sh`** | Session start | Injects branch-aware git history, diff stats, and working directory state |
 | **`agent-reminder.sh`** | Every prompt | Reminds Claude of available agents and the delegation workflow |
 | **`verify.sh`** | Task completion | Runs affected tests and blocks if they fail |
 
 The `SessionStart` hook gives Claude immediate project awareness — which branch you're on, recent commits, and what's been changed. It's smart about branches:
 
-- **On main/master** — shows the last 5 commits
-- **On a feature branch** — shows branch commits since diverging, plus recent main commits
-- **Just branched** — shows the parent branch's recent commits
+- **On main/master/develop** — shows the last 10 commits
+- **On a feature branch** — shows all branch commits since diverging, plus `git diff --stat` for scope
+- **Just branched** — shows the base branch's last 10 commits
+- **Working directory** — shows `git status --short` with staged/unstaged markers and file count
 
 The `UserPromptSubmit` hook dynamically reads your agent files and injects a brief reminder before every message, so Claude never drifts from the delegation workflow mid-session.
 
