@@ -354,12 +354,14 @@ Tell the user: "For native mobile apps, I recommend Maestro as your visual valid
   - "Migrator" — Upgrade and migration specialist
 
 **Q5:**
-- header: "Session Hooks"
-- question: "Set up session hooks? A start hook injects branch-aware git context, and a prompt hook reminds Claude about your agents before every message — so it never forgets the workflow or starts without project awareness."
+- header: "Git Context Hook"
+- question: "Want a session start hook that injects branch-aware git context? It shows Claude your recent commits, branch diff, and working directory state at the start of every session — no need to re-run git log."
 - multiSelect: false
 - options:
-  - "Yes (Recommended)" — Generates two hook scripts: git context on session start + agent reminders on every prompt
-  - "Skip" — Rely on CLAUDE.md instructions only
+  - "Yes (Recommended)" — Generates a SessionStart hook that injects git history and branch context
+  - "Skip" — Claude will use its default git status snapshot
+
+**Note:** The agent-reminder hook (UserPromptSubmit) is NOT optional — it is always generated. It's what ensures Claude delegates to the right agent on every prompt instead of doing work directly. Without it, Claude drifts from the workflow mid-session.
 
 **Note:** For any project where visual validation was enabled in Batch 3 (Playwright for web OR Maestro for mobile), the `design-qa` agent is automatically generated — it does NOT need to be selected as an extra. It is part of the core agent set for any project with visual output.
 
@@ -558,14 +560,28 @@ Replace `{test_glob}` with the project's test file pattern (e.g., `e2e/*`, `__te
 
 **Frontend-specific (if project type is frontend or fullstack):**
 
-Add visual regression testing to the tester's process:
+Add visual regression testing to the tester's process. **NEVER use `npx playwright screenshot`** — it uses `networkidle` which hangs on most dev servers. Use inline `node -e` scripts with `domcontentloaded` instead:
 
 ```
 ## Visual Regression
 
-For sections/components with visual output, include screenshot assertions:
+For sections/components with visual output, screenshot using inline Playwright:
 
-npx playwright screenshot --viewport-size={viewport_sizes} {dev_server_url}/{page} /tmp/screenshot.png
+node -e "
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: {width}, height: {height} } });
+  await page.goto('{dev_server_url}/{page}', { waitUntil: 'domcontentloaded', timeout: 15000 });
+  await page.waitForTimeout(2000);
+  await page.screenshot({ path: '/tmp/screenshot.png' });
+  await browser.close();
+  console.log('Done');
+})();
+"
+
+NEVER use `npx playwright screenshot` — it hangs on dev servers.
+NEVER write temp .js files to the project directory — use inline scripts or /tmp/.
 
 Read screenshots with the Read tool to visually inspect. Add toHaveScreenshot()
 assertions for layout-critical sections.
@@ -606,7 +622,19 @@ layout-critical screens to use as repeatable visual regression checks.
 - `disallowedTools`: Edit, Write (explicit blacklist — QA reports issues, coder fixes them)
 - `model`: from user's choice in Batch 4 Q2
 - `memory`: from user's choice in Batch 4 Q3
+- `maxTurns`: 20 (hard cap to prevent runaway screenshot retries — the agent should finish in ~15 tool calls)
 - `description`: "Visual QA for layout, responsive design, and UI quality. Use after UI changes to verify visual quality."
+
+**System prompt MUST include these screenshot rules (web projects):**
+
+```
+## CRITICAL: Screenshot Rules
+
+- **NEVER use `npx playwright screenshot`** — it uses `networkidle` which hangs on most dev servers
+- **NEVER write temp .js files to the project directory** — use inline `node -e` scripts or write to `/tmp/`
+- **ALWAYS use `domcontentloaded`** as the `waitUntil` option (not `networkidle`)
+- **Keep it fast** — aim for under 15 tool calls total. Read the diff, take screenshots, analyze, report. No retries.
+```
 
 **System prompt should instruct the agent to:**
 
@@ -614,10 +642,86 @@ layout-critical screens to use as repeatable visual regression checks.
 
 2. **Screenshot affected screens** — Use the appropriate tool for the project type:
 
-   **Web projects (Playwright):**
+   **Web projects (inline Playwright — NEVER use `npx playwright screenshot`):**
+
+   Include these ready-to-use recipes in the agent's system prompt so it doesn't waste tool calls figuring out the API:
+
    ```
-   npx playwright screenshot --viewport-size={width},{height} {dev_server_url}/{page} /tmp/{viewport}.png
+   ## Screenshot Recipes
+
+   **Full page screenshot:**
+   node -e "
+   const { chromium } = require('playwright');
+   (async () => {
+     const browser = await chromium.launch();
+     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+     await page.goto('{dev_server_url}', { waitUntil: 'domcontentloaded', timeout: 15000 });
+     await page.waitForTimeout(2000);
+     await page.screenshot({ path: '/tmp/desktop.png' });
+     await browser.close();
+     console.log('Done');
+   })();
+   "
+
+   **Element-targeted screenshot (preferred — faster, more focused):**
+   node -e "
+   const { chromium } = require('playwright');
+   (async () => {
+     const browser = await chromium.launch();
+     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+     await page.goto('{dev_server_url}', { waitUntil: 'domcontentloaded', timeout: 15000 });
+     await page.waitForTimeout(2000);
+     const el = page.locator('.my-section');
+     await el.scrollIntoViewIfNeeded();
+     await el.screenshot({ path: '/tmp/section-desktop.png' });
+     await browser.close();
+     console.log('Done');
+   })();
+   "
+
+   **Multiple viewports in one script (saves tool calls):**
+   node -e "
+   const { chromium } = require('playwright');
+   (async () => {
+     const browser = await chromium.launch();
+     const viewports = [
+       { name: 'mobile', width: 375, height: 812 },
+       { name: 'desktop', width: 1440, height: 900 }
+     ];
+     for (const vp of viewports) {
+       const page = await browser.newPage({ viewport: { width: vp.width, height: vp.height } });
+       await page.goto('{dev_server_url}/{page}', { waitUntil: 'domcontentloaded', timeout: 15000 });
+       await page.waitForTimeout(2000);
+       const el = page.locator('.my-section');
+       await el.scrollIntoViewIfNeeded();
+       await el.screenshot({ path: '/tmp/' + vp.name + '.png' });
+       await page.close();
+     }
+     await browser.close();
+     console.log('Done');
+   })();
+   "
+
+   **DOM inspection (computed styles / element state):**
+   node -e "
+   const { chromium } = require('playwright');
+   (async () => {
+     const browser = await chromium.launch();
+     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+     await page.goto('{dev_server_url}', { waitUntil: 'domcontentloaded', timeout: 15000 });
+     await page.waitForTimeout(2000);
+     const info = await page.evaluate(() => {
+       const el = document.querySelector('.my-section');
+       const style = getComputedStyle(el);
+       return { width: el.offsetWidth, display: style.display, hidden: el.hidden };
+     });
+     console.log(JSON.stringify(info, null, 2));
+     await browser.close();
+   })();
+   "
    ```
+
+   Replace `{dev_server_url}` with the actual dev server URL from Batch 3A Q2. Replace `.my-section` and `{page}` with appropriate selectors/paths for the project.
 
    **Mobile projects (Maestro + simulator/emulator):**
    ```
@@ -722,15 +826,15 @@ For any feature, bug fix, or significant change:
 
 ---
 
-### Generate Session Hooks (if user chose "Yes" in Batch 4 Q5)
+### Generate Session Hooks
 
-Create two hooks that work together: a `SessionStart` hook for git context, and a `UserPromptSubmit` hook for agent reminders. This is a dynamic complement to the static CLAUDE.md instructions.
+**Always generate the agent-reminder hook.** It is foundational to the workflow — without it, Claude drifts from delegation mid-session. The git-context hook is optional (based on Batch 4 Q5).
 
-Write both scripts to the project's `.claude/hooks/` directory (or `~/.claude/hooks/` if the user chose global installation in Batch 4 Q1). Make both executable (`chmod +x`).
+Write scripts to the project's `.claude/hooks/` directory (or `~/.claude/hooks/` if the user chose global installation in Batch 4 Q1). Make all scripts executable (`chmod +x`).
 
 ---
 
-#### Hook 1: `git-context.sh` — SessionStart
+#### Hook 1: `git-context.sh` — SessionStart (if user chose "Yes" in Batch 4 Q5)
 
 Injects branch-aware git context once at the start of every session so Claude has immediate project awareness.
 
@@ -856,9 +960,32 @@ echo "=== End Agent Reminder ==="
 
 ---
 
-#### Register both hooks in settings
+#### Register hooks in settings
 
-Read the existing `.claude/settings.local.json` (or create it). Merge the new hooks without overwriting existing ones.
+Read the existing `.claude/settings.local.json` (or create it). Merge new hooks without overwriting existing ones.
+
+**Always register the agent-reminder hook:**
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/agent-reminder.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**If the user chose "Yes" for git context in Batch 4 Q5**, also register:
 
 ```json
 {
@@ -871,18 +998,6 @@ Read the existing `.claude/settings.local.json` (or create it). Merge the new ho
             "type": "command",
             "command": ".claude/hooks/git-context.sh",
             "timeout": 15
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/agent-reminder.sh",
-            "timeout": 10
           }
         ]
       }
@@ -1079,4 +1194,5 @@ Also tell the user:
 - Agents with memory will get smarter over time
 - If codegraph is initialized, agents will automatically scope their work to only affected files
 - The CLAUDE.md workflow section ensures Claude delegates to agents in every session
-- If hooks were installed: `.claude/hooks/git-context.sh` injects git history on session start, `.claude/hooks/agent-reminder.sh` nudges Claude about agents on every prompt — edit either to customize
+- `.claude/hooks/agent-reminder.sh` nudges Claude about your agents on every prompt — this is always active and keeps the workflow on track
+- If the git context hook was installed: `.claude/hooks/git-context.sh` injects git history on session start — edit either hook to customize
