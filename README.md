@@ -27,15 +27,19 @@ Claude Code is powerful, but it's a generalist. When you ask it to plan, code, r
 ## What You Get
 
 ```
-.claude/agents/
-├── architect.md    ← Plans before code gets written
-├── coder.md        ← Implements following your conventions
-├── reviewer.md     ← Reviews with your priorities in mind
-├── tester.md       ← Writes & runs tests that matter
-└── design-qa.md    ← Visual QA via screenshots (web + mobile)
+.claude/
+├── agents/
+│   ├── architect.md    ← Plans before code gets written
+│   ├── coder.md        ← Implements following your conventions
+│   ├── reviewer.md     ← Reviews with your priorities in mind
+│   ├── tester.md       ← Writes & runs tests that matter
+│   └── design-qa.md    ← Visual QA via screenshots (web + mobile)
+└── hooks/
+    ├── git-context.sh    ← Branch-aware git history on session start
+    └── agent-reminder.sh ← Agent nudge on every prompt
 ```
 
-Each agent is a markdown file with its own **system prompt**, **tool restrictions**, **model choice**, and **persistent memory**. They're fully editable — tweak them anytime.
+Each agent is a markdown file with its own **system prompt**, **tool restrictions**, **model choice**, and **persistent memory**. The hooks keep Claude on track — injecting project context and reminding it to delegate. Everything is fully editable.
 
 <br>
 
@@ -90,7 +94,7 @@ Creates agents that reference **your actual stack** — not generic instructions
 
 A coder agent for a Next.js + TypeScript project looks completely different from one for a Django + Python project. The generated prompts include your linter config, your test runner, your file patterns, your commit style.
 
-Also updates your `CLAUDE.md` with an Agent Workflow section so Claude knows to delegate, and optionally installs a **session start hook** that injects agent awareness + branch-aware git context every time you start a session.
+Also updates your `CLAUDE.md` with an Agent Workflow section and optionally installs **session hooks** that keep Claude on track (see below).
 
 <br>
 
@@ -130,6 +134,28 @@ git diff --name-only HEAD | codegraph affected --stdin --quiet
 ```
 
 Changed a utility? CodeGraph finds every test, component, and module that transitively depends on it — even files not in the diff. Without it, agents fall back to `git diff` pattern matching.
+
+<br>
+
+## Session Hooks
+
+Agents only work if Claude actually uses them. Setup Agents solves this with three layers:
+
+| Layer | When | What it does |
+|:------|:-----|:-------------|
+| **CLAUDE.md** | Loaded every session | Agent workflow table + delegation instructions |
+| **`git-context.sh`** | Session start | Injects branch-aware git history + uncommitted changes |
+| **`agent-reminder.sh`** | Every prompt | Reminds Claude of available agents and the delegation workflow |
+
+The `SessionStart` hook gives Claude immediate project awareness — which branch you're on, recent commits, and what's been changed. It's smart about branches:
+
+- **On main/master** — shows the last 5 commits
+- **On a feature branch** — shows branch commits since diverging, plus recent main commits
+- **Just branched** — shows the parent branch's recent commits
+
+The `UserPromptSubmit` hook dynamically reads your agent files and injects a brief reminder before every message, so Claude never drifts from the delegation workflow mid-session.
+
+Both hooks are optional and fully editable in `.claude/hooks/`.
 
 <br>
 
