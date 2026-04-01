@@ -36,7 +36,8 @@ Claude Code is powerful, but it's a generalist. When you ask it to plan, code, r
 │   └── design-qa.md    ← Visual QA via screenshots (web + mobile)
 └── hooks/
     ├── git-context.sh    ← Branch-aware git history on session start
-    └── agent-reminder.sh ← Agent nudge on every prompt
+    ├── agent-reminder.sh ← Agent nudge on every prompt
+    └── verify.sh         ← Runs affected tests before task completion
 ```
 
 Each agent is a markdown file with its own **system prompt**, **tool restrictions**, **model choice**, and **persistent memory**. The hooks keep Claude on track — injecting project context and reminding it to delegate. Everything is fully editable.
@@ -146,6 +147,7 @@ Agents only work if Claude actually uses them. Setup Agents solves this with thr
 | **CLAUDE.md** | Loaded every session | Agent workflow table + delegation instructions |
 | **`git-context.sh`** | Session start | Injects branch-aware git history + uncommitted changes |
 | **`agent-reminder.sh`** | Every prompt | Reminds Claude of available agents and the delegation workflow |
+| **`verify.sh`** | Task completion | Runs affected tests and blocks if they fail |
 
 The `SessionStart` hook gives Claude immediate project awareness — which branch you're on, recent commits, and what's been changed. It's smart about branches:
 
@@ -155,7 +157,9 @@ The `SessionStart` hook gives Claude immediate project awareness — which branc
 
 The `UserPromptSubmit` hook dynamically reads your agent files and injects a brief reminder before every message, so Claude never drifts from the delegation workflow mid-session.
 
-Both hooks are optional and fully editable in `.claude/hooks/`.
+The `Stop` hook is the safety net. When Claude finishes a task, `verify.sh` finds every changed file, traces affected tests via CodeGraph (or falls back to file pattern matching), and runs only those tests. If anything fails, Claude is blocked from reporting done until it fixes the failures. This is a shell script, not an agent — it doesn't forget, doesn't drift, and doesn't skip steps.
+
+All hooks are fully editable in `.claude/hooks/`.
 
 <br>
 
