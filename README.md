@@ -120,7 +120,7 @@ Agents can't see what they're building — unless you give them eyes.
 
 ## CodeGraph Integration
 
-If [CodeGraph](https://github.com/nicepkg/codegraph) is installed, agents trace the full dependency graph to scope their work:
+If [CodeGraph](https://github.com/colbymchenry/codegraph) is installed, agents trace the full dependency graph to scope their work:
 
 ```bash
 # Instead of guessing which files are affected...
