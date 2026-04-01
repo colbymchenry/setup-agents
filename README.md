@@ -90,6 +90,8 @@ Creates agents that reference **your actual stack** — not generic instructions
 
 A coder agent for a Next.js + TypeScript project looks completely different from one for a Django + Python project. The generated prompts include your linter config, your test runner, your file patterns, your commit style.
 
+Also updates your `CLAUDE.md` with an Agent Workflow section so Claude knows to delegate, and optionally installs a **session start hook** that injects agent awareness + branch-aware git context every time you start a session.
+
 <br>
 
 ### Phase 4 — Verify

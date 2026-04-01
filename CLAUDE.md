@@ -12,7 +12,7 @@ The skill is a single `SKILL.md` file using YAML frontmatter for configuration a
 
 1. **Detect** — Scans the target project (languages, frameworks, test runners, linters, project type)
 2. **Interview** — Asks the user preference questions via `AskUserQuestion` (4 batches)
-3. **Generate** — Creates tailored subagent `.md` files in `.claude/agents/` or `~/.claude/agents/`, then updates the project's `CLAUDE.md` with an Agent Workflow section
+3. **Generate** — Creates tailored subagent `.md` files, updates `CLAUDE.md` with Agent Workflow section, and optionally installs a `SessionStart` hook for agent + git context injection
 4. **Verify** — Offers to test an agent with a small task
 
 Key design decisions:
@@ -21,6 +21,7 @@ Key design decisions:
 - Playwright screenshot loops are added to coder/tester/design-qa agents for any browser-rendered project
 - Each generated subagent gets restricted tool access appropriate to its role (e.g., reviewer is read-only)
 - **CLAUDE.md update is critical** — after generating agents, the skill prepends an "Agent Workflow" section to the project's CLAUDE.md. Without this, fresh sessions ignore the agents and act as a generalist. The `description` field in agent frontmatter alone is not reliable enough to trigger delegation.
+- **Session hook** — an optional `SessionStart` hook (`.claude/hooks/setup-agents-context.sh`) dynamically reads agent files and injects branch-aware git context every session. This is the active complement to the static CLAUDE.md instructions.
 
 ## Editing Guidelines
 
