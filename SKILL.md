@@ -213,7 +213,7 @@ If the user selects "Needs corrections", ask a follow-up AskUserQuestion or read
 - question: "Should commits and PRs hide AI involvement?"
 - multiSelect: false
 - options:
-  - "Hide AI attribution" — No "Co-Authored-By: Claude", no AI mentions in commit messages or PR descriptions
+  - "Undercover mode" — No "Co-Authored-By: Claude", no AI mentions in commit messages or PR descriptions
   - "Show attribution (Default)" — Include Co-Authored-By trailer and standard AI attribution
 
 ### Batch 3 — Visual validation strategy (1 AskUserQuestion call)
@@ -429,7 +429,7 @@ If `.codegraph/` does NOT exist, agents should fall back to manual file mapping 
 - NOT add unnecessary abstractions, comments, or over-engineering
 - Run the project's linter/formatter after writing code if available
 - Follow the commit conventions chosen in Batch 2 Q4
-- If user chose "Hide AI attribution" in Batch 2 Q5: never include "Co-Authored-By" trailers mentioning Claude/AI, never mention AI assistance in commit messages or PR descriptions, write commits and PRs as if a human authored them
+- If user chose "Undercover mode" in Batch 2 Q5: never include "Co-Authored-By" trailers mentioning Claude/AI, never mention AI assistance in commit messages or PR descriptions, write commits and PRs as if a human authored them
 - Update its memory with codebase patterns and conventions discovered
 
 **Frontend-specific (if project type is frontend or fullstack AND user chose Playwright screenshots):**
