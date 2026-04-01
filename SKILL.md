@@ -21,6 +21,29 @@ Subagents are markdown files in `.claude/agents/` (project-level) or `~/.claude/
 
 ---
 
+## Phase 0: Check for existing agents
+
+Before scanning, check if agents already exist:
+
+```bash
+ls .claude/agents/*.md 2>/dev/null
+```
+
+If agent files exist, use AskUserQuestion:
+
+- header: "Existing Agents"
+- question: "I found existing agents: [list names]. What would you like to do?"
+- multiSelect: false
+- options:
+  - "Regenerate all" — Start fresh, overwrite everything
+  - "Update existing" — Re-detect stack and update agent prompts, keep memory intact
+  - "Add new only" — Keep existing agents, just add any missing ones
+  - "Cancel" — Exit without changes
+
+If the user picks "Cancel", stop. If "Add new only", skip generating agents that already exist. If "Update existing", preserve the `memory` directory contents but regenerate the agent `.md` files.
+
+---
+
 ## Phase 1: Detect
 
 Scan the project to build a profile. Look for:
@@ -359,12 +382,31 @@ description: {what it does, when Claude should delegate to it — be specific}
 tools: {comma-separated tool list — restrict appropriately}
 model: {opus, sonnet, haiku, or inherit}
 memory: {user, project, local, or omit}
+maxTurns: {optional — cap agentic turns to prevent runaway agents}
+effort: {optional — low, medium, high, or extreme}
+permissionMode: {optional — dontAsk, auto, acceptEdits, plan, bubble, bypassPermissions}
 ---
 
 {System prompt — this is the ONLY prompt the subagent sees.
 It replaces the default Claude Code system prompt entirely.
 Include everything the agent needs: role, process, conventions, commands.}
 ```
+
+#### Available frontmatter fields
+
+| Field | Required | Values | Purpose |
+|:------|:---------|:-------|:--------|
+| `name` | Yes | string | Agent identifier, used with `@name` |
+| `description` | Yes | string | Shown to Claude to help it decide when to delegate |
+| `tools` | No | comma-separated list, or `*` for all | Tool whitelist. Omit = all tools |
+| `disallowedTools` | No | comma-separated list | Tool blacklist. Use instead of `tools` when easier to exclude a few |
+| `model` | No | opus, sonnet, haiku, inherit | Model override. `inherit` = use parent session's model |
+| `memory` | No | user, project, local | Persistent memory scope. **Note:** enabling memory auto-injects Read, Write, and Edit tools even on otherwise read-only agents |
+| `maxTurns` | No | integer | Cap on agentic turns. Prevents runaway agents |
+| `effort` | No | low, medium, high, extreme | Controls reasoning depth |
+| `permissionMode` | No | dontAsk, auto, acceptEdits, plan, bubble, bypassPermissions | How the agent handles permission prompts |
+| `initialPrompt` | No | string | Prepended to the first user turn. Use for checklists or setup instructions |
+| `hooks` | No | object | Agent-scoped hooks (e.g., a per-agent Stop hook) |
 
 ---
 
@@ -399,9 +441,10 @@ If `.codegraph/` does NOT exist, agents should fall back to manual file mapping 
 **Purpose:** Plans implementations before code gets written. Thinks about trade-offs, identifies affected areas, considers edge cases, and produces a clear plan.
 
 **Frontmatter:**
-- `tools`: Read, Glob, Grep, Bash (read-only — no Edit or Write)
+- `tools`: Read, Glob, Grep, Bash, AskUserQuestion (read-only + can ask questions — no Edit or Write)
 - `model`: from user's choice in Batch 4 Q2
 - `memory`: from user's choice in Batch 4 Q3
+- `effort`: high (planning benefits from deeper reasoning)
 - `description`: Include "Use proactively before implementing features" so Claude delegates planning automatically
 
 **System prompt should instruct the agent to:**
@@ -411,7 +454,7 @@ If `.codegraph/` does NOT exist, agents should fall back to manual file mapping 
 - Flag potential issues: breaking changes, performance concerns, security implications
 - Output a structured plan with: summary, affected files, approach, risks, and open questions
 - Include which tests need creating or updating (use codegraph affected to find them)
-- Ask clarifying questions before finalizing the plan
+- Ask clarifying questions via AskUserQuestion before finalizing the plan
 - Reference the project's actual architecture patterns (detected + user-specified)
 - Update its memory with architectural decisions and patterns discovered
 
@@ -425,6 +468,7 @@ If `.codegraph/` does NOT exist, agents should fall back to manual file mapping 
 - `tools`: Read, Edit, Write, Glob, Grep, Bash (full access — needs to write code and run commands)
 - `model`: from user's choice in Batch 4 Q2
 - `memory`: from user's choice in Batch 4 Q3
+- `permissionMode`: acceptEdits (auto-approve file edits to avoid constant permission prompts)
 - `description`: Describe it as the implementation specialist for this specific stack
 
 **System prompt should instruct the agent to:**
@@ -450,6 +494,7 @@ If `.codegraph/` does NOT exist, agents should fall back to manual file mapping 
 
 **Frontmatter:**
 - `tools`: Read, Glob, Grep, Bash (read-only — reviewers don't modify code)
+- `disallowedTools`: Edit, Write (explicit blacklist as safety rail — reviewers observe, not modify)
 - `model`: from user's choice in Batch 4 Q2
 - `memory`: from user's choice in Batch 4 Q3
 - `description`: Include "Use proactively after code changes" so Claude auto-delegates reviews
@@ -477,6 +522,7 @@ If `.codegraph/` does NOT exist, agents should fall back to manual file mapping 
 - `tools`: Read, Edit, Write, Glob, Grep, Bash (needs to write test files and run them)
 - `model`: from user's choice in Batch 4 Q2
 - `memory`: from user's choice in Batch 4 Q3
+- `permissionMode`: acceptEdits (auto-approve file edits for test files)
 - `description`: Describe it as the testing specialist for the specific test framework
 
 **System prompt MUST include the codegraph-scoped workflow:**
@@ -557,6 +603,7 @@ layout-critical screens to use as repeatable visual regression checks.
 
 **Frontmatter:**
 - `tools`: Read, Glob, Grep, Bash (read-only — QA doesn't modify code)
+- `disallowedTools`: Edit, Write (explicit blacklist — QA reports issues, coder fixes them)
 - `model`: from user's choice in Batch 4 Q2
 - `memory`: from user's choice in Batch 4 Q3
 - `description`: "Visual QA for layout, responsive design, and UI quality. Use after UI changes to verify visual quality."
@@ -736,15 +783,28 @@ echo "INSTRUCTION: This git context has already been fetched for you. Use it dir
 echo ""
 echo "Branch: $BRANCH"
 
+MAX_LINES=30
+
 if [ -n "$BRANCH_COMMITS" ]; then
   # Feature branch with commits — show branch-specific work
   COMMIT_COUNT=$(echo "$BRANCH_COMMITS" | wc -l | tr -d ' ')
   echo ""
   echo "Branch commits ($COMMIT_COUNT commits since $BASE):"
-  echo "$BRANCH_COMMITS"
+  if [ "$COMMIT_COUNT" -gt "$MAX_LINES" ]; then
+    echo "$BRANCH_COMMITS" | head -$MAX_LINES
+    echo "  ... and $((COMMIT_COUNT - MAX_LINES)) more commits"
+  else
+    echo "$BRANCH_COMMITS"
+  fi
   echo ""
   echo "Files changed on this branch:"
-  echo "$BRANCH_DIFF_STAT"
+  STAT_LINES=$(echo "$BRANCH_DIFF_STAT" | wc -l | tr -d ' ')
+  if [ "$STAT_LINES" -gt "$MAX_LINES" ]; then
+    echo "$BRANCH_DIFF_STAT" | tail -1  # summary line (e.g., "50 files changed, ...")
+    echo "  (showing summary only — $STAT_LINES files changed)"
+  else
+    echo "$BRANCH_DIFF_STAT"
+  fi
 else
   # No branch-specific commits — show recent history
   if [ "$BRANCH" = "$BASE" ] || [ -z "$BASE" ]; then
@@ -763,8 +823,14 @@ fi
 if [ -n "$STATUS" ]; then
   CHANGED=$(echo "$STATUS" | wc -l | tr -d ' ')
   echo ""
-  echo "Working directory ($CHANGED changed files):"
-  echo "$STATUS"
+  if [ "$CHANGED" -gt "$MAX_LINES" ]; then
+    echo "Working directory ($CHANGED changed files — showing first $MAX_LINES):"
+    echo "$STATUS" | head -$MAX_LINES
+    echo "  ... and $((CHANGED - MAX_LINES)) more files"
+  else
+    echo "Working directory ($CHANGED changed files):"
+    echo "$STATUS"
+  fi
 fi
 
 echo "=== End Git Context ==="
@@ -792,16 +858,18 @@ echo "=== Agent Reminder ==="
 echo "INSTRUCTION: Delegate to the right agent. Do not do the work directly."
 echo ""
 
+workflow=""
 for f in "$agents_dir"/*.md; do
   [ -f "$f" ] || continue
   name=$(basename "$f" .md)
-  desc=$(awk '/^description:/{sub(/^description: */, ""); print; exit}' "$f")
+  desc=$(awk '/^---$/,/^---$/{if(/^description:/){sub(/^description: */, ""); print; exit}}' "$f")
   printf "  @%-14s — %s\n" "$name" "$desc"
+  workflow="${workflow:+$workflow → }@$name"
 done
 
 echo ""
-echo "Workflow: @architect → @coder → @reviewer → @tester"
-echo "Start with @architect for any feature, fix, or significant change."
+echo "Workflow: $workflow"
+echo "Start with the first agent for any feature, fix, or significant change."
 echo "=== End Agent Reminder ==="
 ```
 
@@ -970,6 +1038,10 @@ if [ -n "$TEST_FILES" ]; then
 
   if [ $TEST_EXIT -ne 0 ]; then
     echo "🛑 BLOCKED: Tests failed. Fix the failing tests before completing your task."
+    echo ""
+    echo "Remaining checklist:"
+    echo "  {linter_command}"
+    exit 2  # Exit code 2 = BLOCKING — prevents Claude from completing the task
   else
     echo "✅ All affected tests passed."
   fi
