@@ -49,9 +49,18 @@ Scan the project to build a profile. Look for:
 | **Frontend / Web app** | HTML/CSS, templates, components, browser rendering, Shopify themes, SPAs, SSR sites, Storybook | Playwright screenshots + visual QA + e2e tests (strongly recommended) |
 | **Backend / API** | REST/GraphQL APIs, CLI tools, libraries, no browser UI | curl/httpie + unit/integration tests |
 | **Fullstack** | Both frontend rendering and backend API | Both strategies — Playwright for UI, curl/tests for API |
-| **Native mobile** | iOS (Swift/SwiftUI), Android (Kotlin), React Native, Flutter | Unit/integration tests — Playwright does NOT apply (no browser) |
+| **Native mobile** | iOS (Swift/SwiftUI), Android (Kotlin), React Native, Flutter | Maestro screenshots via simulator/emulator + unit/integration tests |
 
-**Important:** If the project renders anything in a browser, it qualifies for the Playwright screenshot validation loop. This includes Shopify themes, Next.js, React SPAs, Vue apps, Svelte, static sites, component libraries, etc. The only exception is native mobile apps that run in iOS Simulator or Android Emulator — Playwright can't reach those.
+**Important:** If the project renders anything in a browser, it qualifies for the Playwright screenshot validation loop. This includes Shopify themes, Next.js, React SPAs, Vue apps, Svelte, static sites, component libraries, etc. Native mobile apps use Maestro + simulator/emulator screenshots instead.
+
+**Mobile sub-classification** (when project type is native mobile):
+
+| Platform | Indicators | Simulator/Emulator | Screenshot command |
+|----------|-----------|-------------------|-------------------|
+| **iOS** | .xcodeproj, .xcworkspace, Swift/SwiftUI files, Podfile | iOS Simulator (`xcrun simctl`) | `xcrun simctl io booted screenshot /tmp/screen.png` |
+| **Android** | build.gradle, AndroidManifest.xml, Kotlin/Java files | Android Emulator (`adb`) | `adb exec-out screencap -p > /tmp/screen.png` |
+| **React Native** | react-native in package.json, Metro bundler | Either — detect from project config | Platform-specific command above |
+| **Flutter** | pubspec.yaml, dart files, flutter in config | Either — detect from project config | Platform-specific command above |
 
 Present a concise summary table of what you found, including the project type classification.
 
@@ -209,7 +218,11 @@ If the user selects "Needs corrections", ask a follow-up AskUserQuestion or read
 
 ### Batch 3 — Visual validation strategy (1 AskUserQuestion call)
 
-**Skip this batch entirely for backend-only projects or native mobile apps (iOS/Android).**
+**Skip this batch entirely for backend-only projects.**
+
+---
+
+#### Batch 3A — Web projects (frontend or fullstack)
 
 **For any project that renders in a browser** (web apps, Shopify themes, SPAs, SSR sites, component libraries with Storybook, etc.), Playwright screenshots are the recommended validation approach. This is critical — AI agents can't see what they're building without screenshots. Even if the project already uses Jest, Vitest, or another test runner for unit tests, Playwright screenshots should be layered on top as the visual verification loop.
 
@@ -241,6 +254,41 @@ Tell the user: "For any frontend that renders in a browser, I strongly recommend
   - "Mobile + Desktop (Recommended)" — 375x812 and 1440x900
   - "Mobile + Tablet + Desktop" — 375x812, 768x1024, and 1440x900
   - "Desktop only" — 1440x900
+
+---
+
+#### Batch 3B — Native mobile projects
+
+**For native mobile apps** (iOS, Android, React Native, Flutter), Maestro + simulator/emulator screenshots give agents visual verification of their work. Without this, agents are coding blind — they can't see the UI they're building.
+
+Tell the user: "For native mobile apps, I recommend Maestro as your visual validation loop. Maestro can launch your app in a simulator/emulator, navigate to screens, and take screenshots — giving agents actual eyes on what they're building. It's lightweight, uses simple YAML flows, and works with iOS Simulator and Android Emulator."
+
+**Q1:**
+- header: "Mobile Validation"
+- question: "Maestro screenshots let agents visually verify your mobile app in a simulator/emulator. Enable this?"
+- multiSelect: false
+- options:
+  - "Yes, Maestro screenshots (Recommended)" — Agents screenshot after UI changes via simulator/emulator, visually inspect, fix issues before reporting done
+  - "Tests only" — Just run the test suite, no visual verification
+  - "Manual" — I'll verify visually myself
+
+**Q2:**
+- header: "Platform"
+- question: "Which platform(s) should agents validate?"
+- multiSelect: false
+- options: Auto-detect from project config. Examples:
+  - "iOS only" — iOS Simulator (requires Xcode)
+  - "Android only" — Android Emulator (requires Android Studio)
+  - "Both iOS + Android" — Validate on both platforms
+
+**Q3:**
+- header: "Screens"
+- question: "How should agents navigate to affected screens for screenshots?"
+- multiSelect: false
+- options:
+  - "Maestro flows (Recommended)" — Agents write short YAML flows to navigate and screenshot. I'll provide existing flows if I have them.
+  - "Deep links" — App supports deep links to specific screens (e.g., myapp://settings)
+  - "Manual launch" — Just screenshot whatever is on screen after app launch
 
 ### Batch 4 — Agent configuration (1 AskUserQuestion call, up to 4 questions)
 
@@ -282,7 +330,7 @@ Tell the user: "For any frontend that renders in a browser, I strongly recommend
   - "Documenter" — Documentation and API reference writer
   - "Migrator" — Upgrade and migration specialist
 
-**Note:** For frontend/fullstack projects where Playwright screenshots were enabled in Batch 3, the `design-qa` agent is automatically generated — it does NOT need to be selected as an extra. It is part of the core agent set for any browser-rendered project using visual validation.
+**Note:** For any project where visual validation was enabled in Batch 3 (Playwright for web OR Maestro for mobile), the `design-qa` agent is automatically generated — it does NOT need to be selected as an extra. It is part of the core agent set for any project with visual output.
 
 ---
 
@@ -399,7 +447,34 @@ Read the screenshot with the Read tool to visually inspect it. If something look
 fix it and re-screenshot. Do NOT report done without visual confirmation.
 ```
 
-Use the viewport sizes and dev server URL from Batch 3.
+Use the viewport sizes and dev server URL from Batch 3A.
+
+**Mobile-specific (if project type is native mobile AND user chose Maestro screenshots):**
+
+Add a mobile visual verification step to the coder's process:
+
+```
+## Visual Verification — Mobile (MANDATORY after any UI change)
+
+After editing any file that affects visual output, use Maestro to screenshot in the simulator/emulator:
+
+### iOS Simulator
+xcrun simctl io booted screenshot /tmp/ios_screen.png
+
+### Android Emulator
+adb exec-out screencap -p > /tmp/android_screen.png
+
+### To navigate to a specific screen first, use a Maestro flow:
+maestro test -e SCREENSHOT=true {flow_file}.yaml
+
+Read the screenshot with the Read tool to visually inspect it. If something looks wrong,
+fix it and re-screenshot. Do NOT report done without visual confirmation.
+
+If the app isn't running, build and launch it first:
+{build_and_run_command}
+```
+
+Replace `{build_and_run_command}` with the project's actual build/run command (e.g., `npx react-native run-ios`, `flutter run`, `xcodebuild ... | xcrun simctl install booted`). Replace `{flow_file}` with the appropriate Maestro flow path if the user has existing flows, otherwise instruct the agent to write a short YAML flow to navigate to the affected screen.
 
 ---
 
@@ -484,37 +559,90 @@ Read screenshots with the Read tool to visually inspect. Add toHaveScreenshot()
 assertions for layout-critical sections.
 ```
 
+**Mobile-specific (if project type is native mobile AND user chose Maestro screenshots):**
+
+Add mobile visual regression testing to the tester's process:
+
+```
+## Visual Regression — Mobile
+
+For screens/components with visual output, screenshot via simulator/emulator after running tests:
+
+### iOS Simulator
+xcrun simctl io booted screenshot /tmp/ios_screen.png
+
+### Android Emulator
+adb exec-out screencap -p > /tmp/android_screen.png
+
+### To navigate to a specific screen and screenshot in one step:
+maestro test {flow_file}.yaml
+
+Read screenshots with the Read tool to visually inspect. Write Maestro flows for
+layout-critical screens to use as repeatable visual regression checks.
+```
+
 ---
 
-### Agent: `design-qa` (auto-generated for frontend/fullstack projects)
+### Agent: `design-qa` (auto-generated for visual projects)
 
-**Generate this agent automatically if:** The project renders in a browser AND the user enabled Playwright screenshots in Batch 3. This is a core agent for any visual project, not an optional extra.
+**Generate this agent automatically if:** The user enabled visual validation (Playwright screenshots in Batch 3A OR Maestro screenshots in Batch 3B). This is a core agent for any visual project, not an optional extra.
 
-**Purpose:** Visual QA specialist. Screenshots affected pages at multiple viewports, audits CSS, checks responsive behavior, catches layout issues.
+**Purpose:** Visual QA specialist. Screenshots affected screens at multiple viewports/devices, audits layout, checks responsive behavior, catches visual issues.
 
 **Frontmatter:**
 - `tools`: Read, Glob, Grep, Bash (read-only — QA doesn't modify code)
 - `model`: from user's choice in Batch 4 Q2
 - `memory`: from user's choice in Batch 4 Q3
-- `description`: "Visual QA for CSS, layout, and responsive design. Use after UI changes to verify visual quality."
+- `description`: "Visual QA for layout, responsive design, and UI quality. Use after UI changes to verify visual quality."
 
 **System prompt should instruct the agent to:**
 
-1. **Scope using codegraph** — Use the codegraph-scoped workflow to find all files affected by the diff, filter to visual files (templates, CSS, components)
-2. **Screenshot affected pages** — Use Playwright at the viewports chosen in Batch 3 Q3:
+1. **Scope using codegraph** — Use the codegraph-scoped workflow to find all files affected by the diff, filter to visual files (templates, CSS, components, views, screens)
+
+2. **Screenshot affected screens** — Use the appropriate tool for the project type:
+
+   **Web projects (Playwright):**
    ```
    npx playwright screenshot --viewport-size={width},{height} {dev_server_url}/{page} /tmp/{viewport}.png
    ```
+
+   **Mobile projects (Maestro + simulator/emulator):**
+   ```
+   # Navigate to the affected screen via Maestro flow, then screenshot:
+   maestro test {flow_file}.yaml
+
+   # Or screenshot directly if already on the right screen:
+   # iOS
+   xcrun simctl io booted screenshot /tmp/ios_{screen_name}.png
+   # Android
+   adb exec-out screencap -p > /tmp/android_{screen_name}.png
+   ```
+
+   For mobile, screenshot on each platform the user chose in Batch 3B Q2.
+
 3. **Read and inspect each screenshot** with the Read tool
-4. **Audit against a checklist** tailored to the project:
+
+4. **Audit against a checklist** tailored to the project type:
+
+   **Web projects:**
    - Layout: grid alignment, overflow, spacing consistency
    - Responsive: each viewport renders correctly, no awkward breakpoints
    - Typography: font loading, heading hierarchy, line lengths
    - Images: responsive srcset/sizes, lazy loading, aspect ratios
    - CSS quality: no !important abuse, uses project's CSS variables, no fixed pixel widths
    - Accessibility: color contrast, focus indicators, reduced motion
-5. **Report findings** categorized by viewport with specific CSS fixes
-6. **Update memory** with recurring CSS issues, browser quirks, and responsive patterns
+
+   **Mobile projects:**
+   - Layout: proper use of safe areas, no content under notch/status bar/nav bar
+   - Scrolling: content not clipped, scroll views work correctly, keyboard avoidance
+   - Typography: dynamic type / font scaling respected, text not truncated
+   - Navigation: back buttons, tab bars, gestures working correctly
+   - Platform conventions: follows iOS HIG or Material Design guidelines as appropriate
+   - Dark mode: if supported, verify both light and dark appearances
+   - Device sizes: check on smallest supported device (SE/compact) and largest
+
+5. **Report findings** categorized by screen/viewport with specific fixes
+6. **Update memory** with recurring UI issues, platform quirks, and layout patterns
 
 ---
 
