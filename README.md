@@ -109,18 +109,15 @@ Pick an agent and test it with a real task before you leave the session.
 
 Agents can't see what they're building — unless you give them eyes.
 
-**Web projects** get Playwright screenshots. After every UI change, the coder agent screenshots the page, reads it, and fixes issues before reporting done.
+The **design-qa agent** handles visual verification. After the coder finishes, design-qa screenshots affected pages at multiple viewports, reads the images, and audits layout, responsive behavior, typography, and accessibility.
 
-**Mobile projects** get Maestro + simulator/emulator screenshots. Same loop — build, screenshot, inspect, fix — on iOS Simulator or Android Emulator.
+**Web projects** use Playwright screenshots. **Mobile projects** use Maestro + simulator/emulator screenshots (iOS Simulator or Android Emulator).
 
 ```
- ┌─────────┐     ┌────────────┐     ┌──────────┐     ┌───────┐
- │ Edit    │────▶│ Screenshot │────▶│ Inspect  │────▶│ Fix   │──┐
- │ code    │     │ the UI     │     │ visually │     │ issues│  │
- └─────────┘     └────────────┘     └──────────┘     └───────┘  │
-      ▲                                                          │
-      └──────────────────────────────────────────────────────────┘
-                        repeat until correct
+ ┌─────────┐     ┌────────────┐     ┌──────────┐     ┌────────┐
+ │ Coder   │────▶│ Design QA  │────▶│ Inspect  │────▶│ Report │
+ │ finishes│     │ screenshots│     │ visually │     │findings│
+ └─────────┘     └────────────┘     └──────────┘     └────────┘
 ```
 
 <br>
@@ -188,7 +185,6 @@ All hooks are fully editable in `.claude/hooks/`.
 - Follows your detected code style, linter rules, naming conventions
 - Reads neighboring files to match existing patterns
 - Runs your formatter after writing code
-- Visual verification loop for UI changes (Playwright or Maestro)
 - Follows your commit conventions
 
 </details>
