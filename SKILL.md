@@ -588,7 +588,7 @@ Do NOT enter a debug spiral of run → fail → curl → edit → re-run × 10.
 ### If a test fails
 - Read the error message carefully — it usually tells you exactly what's wrong
 - If a selector doesn't match, curl the page ONCE to check the actual HTML
-- Fix and re-run. Max 2 debug cycles per test. If still failing, simplify the assertion.
+- Fix and re-run. If the same test fails 3 times with the same error, stop and report to the orchestrator.
 ```
 
 For web projects, also add `waitUntil: 'domcontentloaded'` (never `networkidle`) to the testing guidance.
@@ -598,7 +598,7 @@ For web projects, also add `waitUntil: 'domcontentloaded'` (never `networkidle`)
 - Read the changed source files to understand expected behavior
 - Write/update ONLY the affected test files
 - Run ONLY the affected tests, not the full suite
-- Fix failures and re-run until green (max 2 debug cycles per test)
+- Fix failures and re-run until green. If the same test fails 3 times with the same error, stop and report to the orchestrator.
 - If failures are caused by implementation bugs (not test bugs), report back to the orchestrator so the coder can fix — don't try to work around implementation issues in tests
 - Focus on meaningful assertions, not just coverage padding
 - Use the project's existing test utilities, fixtures, and helpers
@@ -833,16 +833,28 @@ Agents cannot spawn other agents via the `Agent` tool — this is a Claude Code 
 - Streams real-time tool call feedback to stderr (e.g., `→ Read(collection.liquid)`, `→ Edit(file.ts)`)
 - Returns the final text response on stdout
 
-**Critical:** Agents that write code (coder, tester) need `--permission-mode acceptEdits` or they silently fail to make changes in non-interactive mode. Read-only agents (architect, reviewer) don't need this.
+**Critical:** Agents that write code (coder, tester) need `--permission-mode bypassPermissions` or they silently fail to make changes in non-interactive mode. Read-only agents (architect, reviewer) don't need this.
+
+**IMPORTANT — shell metacharacter safety:** Agent prompts often contain backticks, `$variables`, and other shell metacharacters (especially for code-heavy tasks). Passing these as quoted command arguments **will corrupt the prompt** — bash interprets backticks as command substitution, `$` as variable expansion, etc. **Always use heredoc syntax with a quoted delimiter** (`<<'PROMPT'`) which prevents all shell interpretation:
 
 ```bash
 # Read-only agents — no permission flag needed
-.claude/scripts/run-agent.sh architect "Plan the search feature. Read src/search.ts. Requirements: ..."
-.claude/scripts/run-agent.sh reviewer "Review changes to src/search.ts. Focus on security and performance."
+.claude/scripts/run-agent.sh architect <<'PROMPT'
+Plan the search feature. Read src/search.ts. Requirements: ...
+PROMPT
 
-# Agents that edit files — MUST include --permission-mode acceptEdits
-.claude/scripts/run-agent.sh coder --permission-mode acceptEdits -- "Implement the search feature. Read src/search.ts. Changes: ..."
-.claude/scripts/run-agent.sh tester --permission-mode acceptEdits -- "Write tests for the search feature. Changed files: ..."
+.claude/scripts/run-agent.sh reviewer <<'PROMPT'
+Review changes to src/search.ts. Focus on security and performance.
+PROMPT
+
+# Agents that edit files — MUST include --permission-mode bypassPermissions
+.claude/scripts/run-agent.sh coder --permission-mode bypassPermissions <<'PROMPT'
+Implement the search feature. Read src/search.ts. Changes: ...
+PROMPT
+
+.claude/scripts/run-agent.sh tester --permission-mode bypassPermissions <<'PROMPT'
+Write tests for the search feature. Changed files: ...
+PROMPT
 ```
 
 Each spawned agent runs as an independent CLI session with:
@@ -854,12 +866,12 @@ Each spawned agent runs as an independent CLI session with:
 **System prompt should instruct the agent to:**
 
 1. **Receive the task** from the main session
-2. **Run the workflow** by spawning agents via `.claude/scripts/run-agent.sh` in sequence:
-   - `.claude/scripts/run-agent.sh architect "..."` — plan the implementation
-   - `.claude/scripts/run-agent.sh coder --permission-mode acceptEdits -- "..."` — implement the plan
-   - `.claude/scripts/run-agent.sh tester --permission-mode acceptEdits -- "..."` — write/run tests. If tests fail due to implementation bugs, send failures back to coder to fix, then re-test. **Max 2 loops.**
-   - `.claude/scripts/run-agent.sh reviewer "..."` — review the final diff
-   - `.claude/scripts/run-agent.sh design-qa "..."` — screenshot and inspect (UI changes only, skip for backend-only)
+2. **Run the workflow** by spawning agents via `.claude/scripts/run-agent.sh` in sequence. **Always use heredoc syntax** (`<<'PROMPT'`) to pass prompts — never pass prompts as quoted command arguments (backticks, `$`, etc. get mangled by the shell):
+   - `.claude/scripts/run-agent.sh architect <<'PROMPT' ... PROMPT` — plan the implementation
+   - `.claude/scripts/run-agent.sh coder --permission-mode bypassPermissions <<'PROMPT' ... PROMPT` — implement the plan
+   - `.claude/scripts/run-agent.sh tester --permission-mode bypassPermissions <<'PROMPT' ... PROMPT` — write/run tests. If tests fail due to implementation bugs, send failures back to coder to fix, then re-test. Stop if the same error repeats 3 times.
+   - `.claude/scripts/run-agent.sh reviewer <<'PROMPT' ... PROMPT` — review the final diff
+   - `.claude/scripts/run-agent.sh design-qa <<'PROMPT' ... PROMPT` — screenshot and inspect (UI changes only, skip for backend-only)
 3. **Handle the coder ↔ tester loop** internally — this is the key advantage. The loop happens inside the orchestrator's context, not the user's.
 4. **Return a structured summary** to the main session using this format:
 
@@ -1253,8 +1265,14 @@ This script is how the orchestrator spawns agents. It wraps `claude --agent <nam
 #!/bin/bash
 # Generated by setup-agents — agent runner with real-time tool call feedback
 #
-# Usage: run-agent.sh <agent-name> [flags...] -- "prompt"
-#   or:  run-agent.sh <agent-name> "prompt"  (no extra flags)
+# Usage (heredoc — PREFERRED, avoids shell metacharacter issues):
+#   .claude/scripts/run-agent.sh <agent-name> [flags...] <<'PROMPT'
+#   Your prompt here — backticks, $vars, etc. are all safe
+#   PROMPT
+#
+# Usage (argument — only for short prompts with no special chars):
+#   run-agent.sh <agent-name> [flags...] -- "prompt"
+#   run-agent.sh <agent-name> "prompt"
 #
 # Tool calls stream to stderr (visible in real-time in orchestrator's Bash output).
 # Final text response goes to stdout (captured by orchestrator).
@@ -1265,7 +1283,12 @@ shift
 FLAGS=()
 PROMPT=""
 
-if [[ " $* " == *" -- "* ]]; then
+# If stdin has data (heredoc), read prompt from stdin and treat all args as flags.
+# Otherwise, parse prompt from arguments.
+if [ ! -t 0 ]; then
+  FLAGS=("$@")
+  PROMPT="$(cat)"
+elif [[ " $* " == *" -- "* ]]; then
   while [ "$1" != "--" ]; do
     FLAGS+=("$1")
     shift
@@ -1281,7 +1304,8 @@ else
 fi
 
 if [ -z "$AGENT_NAME" ] || [ -z "$PROMPT" ]; then
-  echo "Usage: run-agent.sh <agent-name> [flags...] [--] \"prompt\"" >&2
+  echo "Usage: run-agent.sh <agent-name> [flags...] <<'PROMPT'" >&2
+  echo "  or:  run-agent.sh <agent-name> [flags...] [--] \"prompt\"" >&2
   exit 1
 fi
 
