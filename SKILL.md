@@ -815,6 +815,128 @@ If the user selected extras in Batch 4 Q4, generate those too following the same
 
 ---
 
+### Agent: `orchestrator` (ALWAYS generate this)
+
+**Purpose:** Manages the full agent workflow so the main session stays clean. The orchestrator spawns agents, handles the coder ↔ tester loop, and returns a single concise summary. Without it, every agent's verbose output floods back into the user's main context, which fills up fast and degrades quality.
+
+**Frontmatter:**
+- `tools`: Agent, Read, Glob, Grep, Bash (needs Agent tool to spawn subagents + read tools for context)
+- `disallowedTools`: Edit, Write (orchestrator coordinates, it does NOT write code)
+- `model`: from user's choice in Batch 4 Q2 (recommend opus or inherit — orchestration benefits from strong reasoning)
+- `memory`: from user's choice in Batch 4 Q3
+- `description`: "Orchestrates the full agent workflow: architect → coder → tester → reviewer → design-qa. Use for any feature, bug fix, or significant change. Returns a concise summary — all verbose agent output stays contained."
+
+**System prompt should instruct the agent to:**
+
+1. **Receive the task** from the main session
+2. **Run the workflow** by spawning agents in sequence:
+   - `@architect` — plan the implementation
+   - `@coder` — implement the plan
+   - `@tester` — write/run tests. If tests fail due to implementation bugs, send failures back to `@coder` to fix, then re-test. Loop until green (max 3 cycles).
+   - `@reviewer` — review the final diff
+   - `@design-qa` — screenshot and inspect (UI changes only, skip for backend-only changes)
+3. **Handle the coder ↔ tester loop** internally — this is the key advantage. The loop happens inside the orchestrator's context, not the user's.
+4. **Return a structured summary** to the main session using this format:
+
+```
+## Response Format
+
+Return ONLY this structured summary to the main session. All detailed agent output stays in your context.
+
+### Status: [DONE | BLOCKED | NEEDS INPUT]
+
+### Summary
+[1-3 sentences: what was done]
+
+### Changes
+- [file path]: [what changed and why]
+
+### Test Results
+[X passed, Y failed — or "no tests affected"]
+
+### Review Findings
+[Top findings from reviewer, if any — blockers first]
+
+### Visual QA
+[Key findings from design-qa, or "N/A — no UI changes"]
+
+### Issues / Next Steps
+[Anything that needs user attention, or "None"]
+```
+
+5. **Skip steps when appropriate:**
+   - Skip architect for trivial changes (typo fixes, config tweaks)
+   - Skip design-qa for backend-only changes
+   - Skip tester if no test files are affected
+6. **If a step needs user input** (e.g., architect has clarifying questions), surface those to the main session immediately — don't guess
+
+**Agent spawning pattern:**
+
+When spawning each agent, provide the full context it needs in the prompt. Agents run in isolated contexts and don't see previous agents' output unless you include it. For example:
+- Pass the architect's plan to the coder
+- Pass the coder's changed files to the tester
+- Pass the full diff to the reviewer
+
+---
+
+### Response format for ALL agents
+
+Every agent's system prompt MUST include a response format section. This prevents verbose output from consuming context. The orchestrator reads these responses, so they should be structured and concise.
+
+Add this to each agent's system prompt:
+
+**Architect:**
+```
+## Response Format
+Respond in under 400 words. Structure:
+- **Summary**: 1-2 sentences
+- **Affected files**: list with brief reason
+- **Approach**: numbered steps
+- **Risks**: bullet points (if any)
+- **Open questions**: for the user (if any)
+```
+
+**Coder:**
+```
+## Response Format
+Respond in under 300 words. Structure:
+- **Summary**: what you changed and why
+- **Files modified**: list with 1-line description each
+- **Lint result**: pass/fail
+- **Notes**: anything the tester should know
+```
+
+**Tester:**
+```
+## Response Format
+Respond in under 300 words. Structure:
+- **Tests run**: count and file list
+- **Results**: X passed, Y failed
+- **Failures**: specific error + file:line for each failure
+- **Verdict**: PASS (all green) or FAIL (needs coder fix — list what to fix)
+```
+
+**Reviewer:**
+```
+## Response Format
+Respond in under 400 words. Structure:
+- **Verdict**: APPROVE / REQUEST CHANGES / COMMENT
+- **Blockers**: must-fix issues (if any)
+- **Suggestions**: optional improvements
+- **Nits**: minor style issues (if any)
+```
+
+**Design QA:**
+```
+## Response Format
+Respond in under 300 words. Structure:
+- **Screens checked**: list with viewports
+- **Issues**: categorized (layout, responsive, typography, accessibility)
+- **Verdict**: PASS or FAIL with specific fixes needed
+```
+
+---
+
 ### Update Project CLAUDE.md — CRITICAL
 
 After generating all agent files, you **MUST** update the project's `CLAUDE.md` with agent workflow instructions. **Without this, fresh Claude Code sessions will ignore the agents and act as a generalist — defeating the entire purpose of setup-agents.**
@@ -834,29 +956,31 @@ Tailor the content to match the agents that were actually generated. Use this as
 ```markdown
 ## Agent Workflow
 
-This project uses specialized AI agents in `.claude/agents/`. **ALWAYS delegate to the appropriate agent rather than doing work directly.**
+This project uses specialized AI agents in `.claude/agents/`. For any feature, bug fix, or significant change, **delegate to `@orchestrator`** — it manages the full workflow and returns a concise summary.
 
-| Step | Agent | Purpose | Invoke |
-|------|-------|---------|--------|
-| 1 | **architect** | Plan before implementing — scope affected files, trade-offs, risks | `@architect` |
-| 2 | **coder** | Write/edit code following project conventions (does NOT run tests) | `@coder` |
-| 3 | **tester** | Write/run {test framework} tests, report failures back to coder | `@tester` |
-| 4 | **reviewer** | Review the diff for {review priorities from Batch 2 Q1} | `@reviewer` |
-| 5 | **design-qa** | Visual QA — screenshot at {viewports} and inspect (NO test running) | `@design-qa` |
+### How it works
 
-### Workflow
+`@orchestrator` runs the pipeline internally:
+1. `@architect` → plans the implementation
+2. `@coder` → writes code (linter only, no tests)
+3. `@tester` → writes/runs tests (loops with coder if failures)
+4. `@reviewer` → reviews the final diff
+5. `@design-qa` → screenshots affected pages (UI changes only)
 
-For any feature, bug fix, or significant change:
+All verbose agent output stays inside the orchestrator's context. You get back a structured summary with: changes made, test results, review findings, and any issues.
 
-1. **Plan** → `@architect` analyzes the request, identifies affected files, and produces an implementation plan
-2. **Implement** → `@coder` writes code following the architect's plan and project conventions. Runs linter only — does NOT run tests.
-3. **Test** → `@tester` writes/updates tests and runs them. If tests fail due to implementation bugs, report back so coder can fix → re-test loop until green.
-4. **Review** → `@reviewer` checks the diff for {review priorities}
-5. **Visual QA** → `@design-qa` takes screenshots only — NO test running. Inspects for layout/responsive issues. (UI changes only)
+### Direct agent access
 
-**Important:** Only the `@tester` agent runs tests. The `@coder` runs the linter only. The `@design-qa` takes screenshots only. This prevents redundant Playwright usage across agents.
+You can also invoke agents directly when you want a specific one:
 
-**Always start with the architect.** Even for seemingly simple changes, the architect identifies affected files, edge cases, and test requirements that are easy to miss when jumping straight to code.
+| Agent | Purpose | Invoke |
+|-------|---------|--------|
+| **orchestrator** | Full workflow — plan, code, test, review, QA | `@orchestrator` |
+| **architect** | Plan only — scope, trade-offs, risks | `@architect` |
+| **coder** | Implement only — code + lint | `@coder` |
+| **tester** | Test only — write/run affected tests | `@tester` |
+| **reviewer** | Review only — check diff for issues | `@reviewer` |
+| **design-qa** | Visual QA only — screenshot + inspect | `@design-qa` |
 
 ### When NOT to delegate
 
@@ -867,9 +991,9 @@ For any feature, bug fix, or significant change:
 
 #### Adjustments
 
-- **Backend-only projects:** Remove the design-qa row and step 5. Remove the "UI changes only" note.
+- **Backend-only projects:** Remove design-qa from the pipeline description. The orchestrator will skip it automatically for non-UI changes.
 - **Custom agents:** Add rows for any extra agents generated from Batch 4 Q4 (e.g., shopify-expert, security, devops).
-- **Fill in specifics:** Replace `{review priorities}`, `{test framework}`, and `{viewports}` with the actual values from the interview.
+- **Fill in specifics:** Replace any placeholder values with the actual values from the interview.
 - **Preserve existing content:** When a CLAUDE.md already exists, keep all existing sections intact below the new agent workflow section.
 
 ---
@@ -974,9 +1098,9 @@ exit 0
 
 #### Hook 2: `agent-reminder.sh` — UserPromptSubmit
 
-Injects a brief agent reminder before every user message so Claude never drifts from the delegation workflow mid-session.
+Injects a brief agent reminder before every user message so Claude delegates to the orchestrator instead of doing work directly.
 
-The script reads the actual agent files dynamically, so it stays in sync if agents are added, removed, or renamed.
+Kept deliberately short — the orchestrator's own system prompt has the full workflow details.
 
 Reference implementation — tailor the agents directory path to match the user's installation choice:
 
@@ -985,22 +1109,12 @@ Reference implementation — tailor the agents directory path to match the user'
 # Generated by setup-agents — agent reminder on every prompt
 
 agents_dir=".claude/agents"
-[ -d "$agents_dir" ] || exit 0
+[ -d "$agents_dir" ] || [ -f "$agents_dir/orchestrator.md" ] || exit 0
 
 echo "=== Agent Reminder ==="
-echo "INSTRUCTION: Delegate to the right agent. Do not do the work directly."
-echo ""
-
-for f in "$agents_dir"/*.md; do
-  [ -f "$f" ] || continue
-  name=$(basename "$f" .md)
-  desc=$(awk '/^---$/,/^---$/{if(/^description:/){sub(/^description: */, ""); print; exit}}' "$f")
-  printf "  @%-14s — %s\n" "$name" "$desc"
-done
-
-echo ""
-echo "Workflow: @architect → @coder → @tester (loop with coder if failures) → @reviewer → @design-qa (screenshots only)"
-echo "Only @tester runs tests. @design-qa takes screenshots only."
+echo "For features, bug fixes, or significant changes → delegate to @orchestrator"
+echo "It runs the full pipeline (architect → coder → tester → reviewer → design-qa) and returns a concise summary."
+echo "Direct access: @architect @coder @tester @reviewer @design-qa"
 echo "=== End Agent Reminder ==="
 ```
 
@@ -1213,20 +1327,18 @@ report back to the orchestrator so the coder can fix.
 After generating all agents, use AskUserQuestion:
 
 - header: "Done"
-- question: "Agents created! Want to test one with a small task?"
+- question: "Agents created! Want to test the orchestrator with a small task?"
 - multiSelect: false
 - options:
+  - "Test orchestrator" — Give it a feature to plan, implement, test, and review
   - "Test architect" — Give it a feature to plan
-  - "Test reviewer" — Have it review recent changes
   - "Test coder" — Give it something small to implement
   - "Skip" — I'll try them out later
 
 Also tell the user:
-- Agents are markdown files they can edit to refine
-- Run `/agents` to see all available agents
-- Use `@agent-name` to guarantee a specific agent runs
+- Use `@orchestrator` for any feature, fix, or significant change — it runs the full pipeline and returns a concise summary
+- You can also invoke agents directly: `@architect`, `@coder`, `@tester`, `@reviewer`, `@design-qa`
+- Agents are markdown files they can edit to refine — each one has a response format section you can customize
 - Agents with memory will get smarter over time
 - If codegraph is initialized, agents will automatically scope their work to only affected files
-- The CLAUDE.md workflow section ensures Claude delegates to agents in every session
-- `.claude/hooks/agent-reminder.sh` nudges Claude about your agents on every prompt — this is always active and keeps the workflow on track
-- If the git context hook was installed: `.claude/hooks/git-context.sh` injects git history on session start — edit either hook to customize
+- The CLAUDE.md workflow section and agent-reminder hook keep Claude on track every session

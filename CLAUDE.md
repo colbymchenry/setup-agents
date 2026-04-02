@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Claude Code skill definition (`SKILL.md`) that bootstraps specialized AI subagents (architect, coder, reviewer, tester, design-qa) tailored to any project. Invoked via `/setup-agents` or when a user says "setup agents."
+A Claude Code skill definition (`SKILL.md`) that bootstraps specialized AI subagents (orchestrator, architect, coder, tester, reviewer, design-qa) tailored to any project. Invoked via `/setup-agents` or when a user says "setup agents."
 
 ## Architecture
 
@@ -12,21 +12,26 @@ The skill is a single `SKILL.md` file using YAML frontmatter for configuration a
 
 1. **Detect** — Scans the target project (languages, frameworks, test runners, linters, project type)
 2. **Interview** — Asks the user preference questions via `AskUserQuestion` (4 batches)
-3. **Generate** — Creates tailored subagent `.md` files, updates `CLAUDE.md` with Agent Workflow section, and optionally installs a `SessionStart` hook for agent + git context injection
-4. **Verify** — Offers to test an agent with a small task
+3. **Generate** — Creates tailored subagent `.md` files, updates `CLAUDE.md` with Agent Workflow section, and installs hooks
+4. **Verify** — Offers to test the orchestrator with a small task
 
 Key design decisions:
+- **Orchestrator pattern** — An `orchestrator` agent manages the full pipeline (architect → coder → tester ↔ coder → reviewer → design-qa) internally and returns a concise structured summary. All verbose agent output stays in the orchestrator's context, keeping the user's main session clean.
+- **Response format constraints** — Every agent has a response format section capping output length and requiring structured responses. This prevents context explosion even when agents are invoked directly.
 - Project type classification (frontend/backend/fullstack/native mobile) drives which agents and validation strategies are generated
-- CodeGraph integration (`codegraph affected --stdin`) is used for dependency-aware scoping when `.codegraph/` exists, with git diff fallback otherwise
-- Playwright screenshot loops are added to coder/tester/design-qa agents for any browser-rendered project
+- CodeGraph integration (`codegraph affected --stdin` + MCP exploration tools) is used for dependency-aware scoping and code understanding when `.codegraph/` exists
+- Playwright screenshots use inline `node -e` scripts with `domcontentloaded` (never `npx playwright screenshot` which uses `networkidle` and hangs)
+- Only the tester agent runs tests; the coder runs the linter only; design-qa takes screenshots only — no Playwright overlap
 - Each generated subagent gets restricted tool access appropriate to its role (e.g., reviewer is read-only)
-- **CLAUDE.md update is critical** — after generating agents, the skill prepends an "Agent Workflow" section to the project's CLAUDE.md. Without this, fresh sessions ignore the agents and act as a generalist. The `description` field in agent frontmatter alone is not reliable enough to trigger delegation.
-- **Session hook** — an optional `SessionStart` hook (`.claude/hooks/setup-agents-context.sh`) dynamically reads agent files and injects branch-aware git context every session. This is the active complement to the static CLAUDE.md instructions.
+- **CLAUDE.md update is critical** — after generating agents, the skill prepends an "Agent Workflow" section pointing to `@orchestrator`. Without this, fresh sessions ignore the agents.
+- **Agent-reminder hook** (always installed) — brief nudge on every prompt pointing to `@orchestrator`. Git-context hook is optional.
+- **verify.sh is NOT a Stop hook** — it's a utility script the tester agent calls. Running tests on every response is wasteful.
 
 ## Editing Guidelines
 
 - The `allowed-tools` frontmatter field controls which tools the skill itself can use at runtime
 - Interview questions use `AskUserQuestion` with structured options — never plain text
-- Generated agent files use their own frontmatter schema: `name`, `description`, `tools`, `model`, `memory`
-- The `description` field in generated agents influences when Claude auto-delegates to them (e.g., "Use proactively before implementing features"), but the CLAUDE.md workflow section is the primary mechanism for ensuring delegation
+- Generated agent files use their own frontmatter schema: `name`, `description`, `tools`, `model`, `memory`, `maxTurns`
+- The orchestrator needs the `Agent` tool to spawn subagents
+- Every agent must have a `## Response Format` section in its system prompt
 - The "Update Project CLAUDE.md" step in Phase 3 must always run — it's what makes agents actually get used in practice

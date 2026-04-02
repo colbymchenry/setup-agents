@@ -29,6 +29,7 @@ Claude Code is powerful, but it's a generalist. When you ask it to plan, code, r
 ```
 .claude/
 ├── agents/
+│   ├── orchestrator.md ← Runs the full pipeline, returns concise summary
 │   ├── architect.md    ← Plans before code gets written
 │   ├── coder.md        ← Implements following your conventions
 │   ├── tester.md       ← Writes & runs tests (the ONLY agent that runs tests)
@@ -36,12 +37,14 @@ Claude Code is powerful, but it's a generalist. When you ask it to plan, code, r
 │   └── design-qa.md    ← Visual QA via screenshots (web + mobile)
 ├── hooks/
 │   ├── git-context.sh    ← Branch-aware git history on session start (optional)
-│   └── agent-reminder.sh ← Agent nudge on every prompt (always installed)
+│   └── agent-reminder.sh ← Points Claude to @orchestrator (always installed)
 └── scripts/
     └── verify.sh         ← Finds & runs affected tests (called by tester agent)
 ```
 
-Each agent is a markdown file with its own **system prompt**, **tool restrictions**, **model choice**, and **persistent memory**. The hooks keep Claude on track — injecting project context and reminding it to delegate. Everything is fully editable.
+The **orchestrator** is the key. Instead of each agent dumping verbose output into your main chat, the orchestrator runs the full pipeline internally and returns a structured summary. Your main context stays clean.
+
+Each agent is a markdown file with its own **system prompt**, **tool restrictions**, **model choice**, and **persistent memory**. Everything is fully editable.
 
 <br>
 
@@ -110,21 +113,30 @@ Pick an agent and test it with a real task before you leave the session.
 
 Agents can't see what they're building — unless you give them eyes.
 
-The **design-qa agent** handles visual verification. After the tester confirms tests pass, design-qa screenshots affected pages at multiple viewports, reads the images, and audits layout, responsive behavior, typography, and accessibility. It takes screenshots only — it does NOT run tests.
+All agent output stays inside the orchestrator — your main chat gets back a structured summary with changes, test results, review findings, and any issues.
 
 **Web projects** use inline Playwright scripts with `domcontentloaded` (never `networkidle`). **Mobile projects** use Maestro + simulator/emulator screenshots (iOS Simulator or Android Emulator).
 
 ```
-                    ┌───────────────────────────┐
-                    │         Feedback loop      │
-                    ▼                            │
- ┌──────────┐  ┌────────┐  ┌────────┐  ┌───────┴──┐  ┌──────────┐  ┌──────────┐
- │Architect │─▶│ Coder  │─▶│ Tester │─▶│ Failures?│  │ Reviewer │─▶│Design QA │
- │ plans    │  │ writes │  │ tests  │  └──────────┘  │ reviews  │  │screenshots│
- └──────────┘  └────────┘  └────────┘    │     │     └──────────┘  └──────────┘
-                    ▲                    Yes    No
-                    │                    │      │
-                    └────────────────────┘      └──────────────────▶
+ You ──▶ @orchestrator ──▶ Concise summary back to you
+              │
+              │  (all verbose output stays inside)
+              ▼
+         ┌──────────┐
+         │Architect │── plans
+         └────┬─────┘
+              ▼
+         ┌──────────┐     ┌────────┐
+         │  Coder   │◀───▶│ Tester │ ← loop until green
+         └────┬─────┘     └────────┘
+              ▼
+         ┌──────────┐
+         │ Reviewer │── reviews tested code
+         └────┬─────┘
+              ▼
+         ┌──────────┐
+         │Design QA │── screenshots only (UI changes)
+         └──────────┘
 ```
 
 <br>
@@ -144,15 +156,15 @@ Changed a utility? CodeGraph finds every test, component, and module that transi
 
 ## Session Hooks
 
-Agents only work if Claude actually uses them. Setup Agents solves this with two layers:
+Agents only work if Claude actually uses them. Setup Agents solves this with three layers:
 
 | Layer | When | What it does |
 |:------|:-----|:-------------|
-| **CLAUDE.md** | Loaded every session | Agent workflow table + delegation instructions |
-| **`agent-reminder.sh`** | Every prompt | Reminds Claude of available agents and the delegation workflow |
+| **CLAUDE.md** | Loaded every session | Points Claude to `@orchestrator` for all significant work |
+| **`agent-reminder.sh`** | Every prompt | Brief nudge: "delegate to @orchestrator" |
 | **`git-context.sh`** | Session start (optional) | Injects branch-aware git history, diff stats, and working directory state |
 
-The `agent-reminder.sh` hook is foundational — it's always installed. It dynamically reads your agent files and injects a brief reminder before every message, so Claude never drifts from the delegation workflow mid-session.
+The `agent-reminder.sh` hook is always installed. It's kept deliberately short — just a one-liner pointing to `@orchestrator`. The orchestrator's own system prompt has the full workflow details.
 
 The `git-context.sh` hook is optional. If installed, it gives Claude immediate project awareness — which branch you're on, recent commits, and what's been changed. It's smart about branches:
 
@@ -249,13 +261,13 @@ All hooks and scripts are fully editable.
 # In any project, just run:
 /setup-agents
 
-# After setup, agents work automatically:
-# Claude delegates planning to architect, reviews to reviewer, etc.
+# After setup, use the orchestrator for any significant work:
+@orchestrator add user authentication to the dashboard
 
-# Or invoke a specific agent:
+# It runs the full pipeline and returns a concise summary.
+# You can also invoke agents directly:
 @architect plan the authentication flow
 @coder implement the login page
-@reviewer check my latest changes
 @tester write tests for the new API endpoints
 ```
 
