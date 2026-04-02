@@ -820,21 +820,39 @@ If the user selected extras in Batch 4 Q4, generate those too following the same
 **Purpose:** Manages the full agent workflow so the main session stays clean. The orchestrator spawns agents, handles the coder ↔ tester loop, and returns a single concise summary. Without it, every agent's verbose output floods back into the user's main context, which fills up fast and degrades quality.
 
 **Frontmatter:**
-- `tools`: Agent, Read, Glob, Grep, Bash (needs Agent tool to spawn subagents + read tools for context)
+- `tools`: Read, Glob, Grep, Bash (read tools for context + Bash to spawn agents via CLI)
 - `disallowedTools`: Edit, Write (orchestrator coordinates, it does NOT write code)
 - `model`: from user's choice in Batch 4 Q2 (recommend opus or inherit — orchestration benefits from strong reasoning)
 - `memory`: from user's choice in Batch 4 Q3
 - `description`: "Orchestrates the full agent workflow: architect → coder → tester → reviewer → design-qa. Use for any feature, bug fix, or significant change. Returns a concise summary — all verbose agent output stays contained."
 
+**How the orchestrator spawns agents:**
+
+Agents cannot spawn other agents via the `Agent` tool — this is a Claude Code limitation. Instead, the orchestrator spawns agents using `claude --agent <name> -p "prompt"` via the Bash tool. This loads the full agent definition from `.claude/agents/<name>.md` including system prompt, tool restrictions, and model settings.
+
+```bash
+# Spawns the architect agent with its full definition
+claude --agent architect -p "Plan the search feature. Read src/search.ts. Requirements: ..."
+
+# Spawns the coder agent with its full definition  
+claude --agent coder -p "Implement the search feature. Read src/search.ts. Changes: ..."
+```
+
+Each spawned agent runs as an independent CLI session with:
+- Its own system prompt from the `.md` file
+- Tool restrictions from frontmatter (e.g., reviewer is read-only)
+- Model settings from frontmatter
+- Access to the same filesystem (changes from coder are visible to tester)
+
 **System prompt should instruct the agent to:**
 
 1. **Receive the task** from the main session
-2. **Run the workflow** by spawning agents in sequence:
-   - `@architect` — plan the implementation
-   - `@coder` — implement the plan
-   - `@tester` — write/run tests. If tests fail due to implementation bugs, send failures back to `@coder` to fix, then re-test. **Max 2 loops.**
-   - `@reviewer` — review the final diff (can run in parallel with design-qa)
-   - `@design-qa` — screenshot and inspect (UI changes only, skip for backend-only changes; can run in parallel with reviewer)
+2. **Run the workflow** by spawning agents via `claude --agent <name> -p` in sequence:
+   - `claude --agent architect -p "..."` — plan the implementation
+   - `claude --agent coder -p "..."` — implement the plan
+   - `claude --agent tester -p "..."` — write/run tests. If tests fail due to implementation bugs, send failures back to coder to fix, then re-test. **Max 2 loops.**
+   - `claude --agent reviewer -p "..."` — review the final diff
+   - `claude --agent design-qa -p "..."` — screenshot and inspect (UI changes only, skip for backend-only)
 3. **Handle the coder ↔ tester loop** internally — this is the key advantage. The loop happens inside the orchestrator's context, not the user's.
 4. **Return a structured summary** to the main session using this format:
 
@@ -874,93 +892,103 @@ Return ONLY this structured summary to the main session. All detailed agent outp
 
 **Agent prompting rules:**
 
-Keep prompts to agents short. Agents can read files themselves — don't paste code into prompts. Reference file paths and line numbers instead.
+Give agents the full context they need. The orchestrator's context is where verbose output belongs — that's the whole point of the pattern.
 
-Bad: "Here is the full 200-line plan from the architect: [wall of text]..."
-Good: "Implement the search feature. Read `src/search.ts`. Changes: 1) Add fuzzy matching. 2) Update the result component. 3) Add tests."
-
-When spawning each agent, provide the context it needs:
-- Pass the architect's plan summary (not full output) to the coder
-- Pass the coder's changed file list to the tester
-- Pass the full diff context to the reviewer
+- **Pass the full architect plan** to the coder — it needs the complete picture to implement correctly
+- **Pass the coder's full change list** to the tester — it needs to know what changed to test it
+- **Pass the full diff context** to the reviewer
+- **Don't truncate agent output** — no `| tail`, no `| head`. Capture the full response.
+- Agents can read files themselves — reference file paths instead of pasting file contents
 
 **Important rules:**
-- **Never return raw agent output** to the main session. Synthesize it.
-- **Run reviewer + design-qa in parallel** when both apply — they're independent.
-- **Don't over-explain.** The user can read diffs themselves.
+- **Never return raw agent output** to the main session. Synthesize it into the structured summary format.
+- **Don't over-explain** in your summary back to the user. The user can read diffs themselves.
 - **If an agent fails or errors**, diagnose briefly and retry once. If still broken, report the issue to the main session.
 
 ---
 
 ### Response format for ALL agents
 
-Every agent's system prompt MUST include a response format section. This prevents verbose output from consuming context. The orchestrator reads these responses, so they should be structured and concise.
+Every agent's system prompt MUST include a response format section. Agents should produce **structured, complete output** — the orchestrator needs enough detail to coordinate the next step. No word limits. Use headings, bullets, and file references so output is scannable and actionable.
 
 Add this to each agent's system prompt. Use concrete format templates — agents follow examples better than abstract instructions.
 
-**Architect (under 500 words):**
+**Architect:**
 ```
-## Response Constraints
+## Response Format
 
-Keep your response under 500 words. The orchestrator needs a concise plan, not an essay.
+Use structured output the orchestrator can pass directly to the coder.
 
-- Use bullet points, not paragraphs
-- List file paths and what changes — don't paste code blocks
-- Skip obvious context the coder can derive by reading the files
-- Focus on *decisions* and *non-obvious details* — the coder handles the rest
+## Summary
+[1-2 sentence overview of the approach]
+
+## Affected Files
+- `path/file.ext` — [what changes and why]
+
+## Implementation Plan
+[Numbered steps with file paths, line references, and specific changes]
+
+## Risks & Considerations
+- [Edge cases, breaking changes, performance concerns]
+
+## Open Questions
+- [Anything that needs user input before proceeding]
 ```
 
-**Coder (under 200 words):**
+**Coder:**
 ```
-## Response Constraints
+## Response Format
 
-Keep your response under 200 words. Report what you changed, not how you changed it. The orchestrator and user can read the diff.
+Report what you changed with enough detail that the orchestrator knows what to pass to the tester.
 
-Format:
 ## Changes
-- `file.ext` — [1-line summary]
+- `file.ext` — [what changed and why]
 
 ## Lint
-[pass/fail + offense count]
+[pass/fail + details if failed]
 
 ## Notes
-[Only if something unexpected happened]
+[Decisions made, trade-offs, anything the tester or reviewer should know]
 ```
 
-**Tester (under 200 words):**
+**Tester:**
 ```
-## Response Constraints
+## Response Format
 
-Keep your response under 200 words. Report pass/fail results, not test implementation details.
+Report results with enough detail for the orchestrator to decide if a coder fix loop is needed.
 
-Format:
 ## Results
 - X tests passed, Y failed
 
 ## Failures (if any)
-- test name: error summary → likely cause (implementation bug vs test issue)
+- test name: full error summary → likely cause (implementation bug vs test bug)
 
 ## Changes
-- `e2e/file.spec.ts` — [what was added/updated]
+- `e2e/file.spec.ts` — [what was added/updated and why]
 ```
 
-**Reviewer (under 300 words):**
+**Reviewer:**
 ```
-## Response Constraints
+## Response Format
 
-Keep your response under 300 words. Focus on blockers and actionable suggestions. Skip nits unless they're patterns worth correcting.
+Focus on blockers and actionable suggestions. Every finding must include a concrete fix.
 
-- Every finding must include a concrete fix (file, line, what to change)
-- Don't explain *why* something is a best practice — just state the issue and fix
+### Blockers
+- `file:line` — issue → fix
+
+### Suggestions
+- `file:line` — issue → fix
+
+### Good
+- [What was done well — reinforces patterns worth keeping]
 ```
 
-**Design QA (under 150 words):**
+**Design QA:**
 ```
-## Response Constraints
+## Response Format
 
-Keep your response under 150 words. Report issues found and screenshot paths. Don't describe what looks fine — only call out problems.
+Report screenshot results and any issues found. Don't describe what looks fine — only call out problems.
 
-Format:
 ## Screenshots
 - `/tmp/desktop.png` — [OK or issue]
 - `/tmp/mobile.png` — [OK or issue]

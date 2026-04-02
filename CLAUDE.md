@@ -32,6 +32,6 @@ Key design decisions:
 - The `allowed-tools` frontmatter field controls which tools the skill itself can use at runtime
 - Interview questions use `AskUserQuestion` with structured options — never plain text
 - Generated agent files use their own frontmatter schema: `name`, `description`, `tools`, `model`, `memory`, `maxTurns`
-- The orchestrator needs the `Agent` tool to spawn subagents
+- The orchestrator spawns agents via `claude --agent <name> -p` (Bash), NOT the Agent tool — agents can't spawn other agents via the Agent tool (Claude Code limitation)
 - Every agent must have a `## Response Format` section in its system prompt
 - The "Update Project CLAUDE.md" step in Phase 3 must always run — it's what makes agents actually get used in practice
