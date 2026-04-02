@@ -833,7 +833,9 @@ Agents cannot spawn other agents via the `Agent` tool — this is a Claude Code 
 - Streams real-time tool call feedback to stderr (e.g., `→ Read(collection.liquid)`, `→ Edit(file.ts)`)
 - Returns the final text response on stdout
 
-**Critical:** Agents that write code (coder, tester) need `--permission-mode bypassPermissions` or they silently fail to make changes in non-interactive mode. Read-only agents (architect, reviewer) don't need this.
+**Critical — Bash timeout:** Always set the Bash tool timeout to 600000 (10 minutes) for ALL run-agent.sh calls. Agent tasks take much longer than the default 2-minute Bash timeout. Without this, Bash kills the agent mid-work.
+
+**Critical — permissions:** Agents that write code (coder, tester) need `--permission-mode bypassPermissions` or they silently fail to make changes in non-interactive mode. Read-only agents (architect, reviewer) don't need this.
 
 **IMPORTANT — shell metacharacter safety:** Agent prompts often contain backticks, `$variables`, and other shell metacharacters (especially for code-heavy tasks). Passing these as quoted command arguments **will corrupt the prompt** — bash interprets backticks as command substitution, `$` as variable expansion, etc. **Always use heredoc syntax with a quoted delimiter** (`<<'PROMPT'`) which prevents all shell interpretation:
 
