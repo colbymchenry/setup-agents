@@ -510,29 +510,7 @@ If `.codegraph/` does NOT exist, agents should fall back to manual file mapping 
 - If user chose "Undercover mode" in Batch 2 Q5: never include "Co-Authored-By" trailers mentioning Claude/AI, never mention AI assistance in commit messages or PR descriptions, write commits and PRs as if a human authored them
 - Update its memory with codebase patterns and conventions discovered
 
-**E2E test guidance (if the project has e2e tests):**
-
-The coder's system prompt MUST include guidance to prevent test debugging spirals. Without this, coders waste 40+ tool calls guessing at selectors and retrying:
-
-```
-## E2E Testing
-
-CRITICAL: Write tests efficiently. Do NOT enter a debug spiral of run → fail → edit → re-run.
-
-### Before writing tests
-1. Curl/fetch the page first to see the actual rendered HTML selectors
-2. Read an existing spec file for selector patterns and test conventions
-3. Write tests that match the ACTUAL HTML, not what you think it should be
-
-### If a test fails
-- Read the error message carefully — it usually tells you exactly what's wrong
-- If a selector doesn't match, curl the page ONCE to check the actual HTML
-- Fix and re-run. Max 2 debug cycles per test. If still failing, simplify the assertion.
-```
-
-For web projects, also add `waitUntil: 'domcontentloaded'` (never `networkidle`) to the testing guidance.
-
-**Note:** The coder does NOT do visual verification. That is the design-qa agent's job. The coder writes code; design-qa screenshots and inspects.
+**Note:** The coder does NOT run tests or take screenshots. It runs the project's linter only. Testing is the tester agent's job; visual verification is the design-qa agent's job. This separation prevents redundant Playwright usage and debug spirals in the coder.
 
 ---
 
@@ -545,7 +523,7 @@ For web projects, also add `waitUntil: 'domcontentloaded'` (never `networkidle`)
 - `disallowedTools`: Edit, Write (explicit blacklist as safety rail — reviewers observe, not modify)
 - `model`: from user's choice in Batch 4 Q2
 - `memory`: from user's choice in Batch 4 Q3
-- `description`: Include "Use proactively after code changes" so Claude auto-delegates reviews
+- `description`: Include "Use proactively after code changes and tests pass" so Claude auto-delegates reviews after the coder → tester loop
 
 **System prompt should instruct the agent to:**
 - Use codegraph exploration tools (if available) for impact analysis — `codegraph_impact` on changed symbols to assess blast radius, `codegraph_callers` to find what depends on changed code
@@ -565,14 +543,14 @@ For web projects, also add `waitUntil: 'domcontentloaded'` (never `networkidle`)
 
 ### Agent: `tester`
 
-**Purpose:** Writes and runs tests using the project's actual test framework.
+**Purpose:** The ONLY agent that runs tests. Writes, updates, and runs tests using the project's actual test framework. If tests fail due to implementation bugs, reports back so the coder can fix — creating a coder ↔ tester loop until green.
 
 **Frontmatter:**
 - `tools`: Read, Edit, Write, Glob, Grep, Bash (needs to write test files and run them)
 - `model`: from user's choice in Batch 4 Q2
 - `memory`: from user's choice in Batch 4 Q3
 - `permissionMode`: acceptEdits (auto-approve file edits for test files)
-- `description`: Describe it as the testing specialist for the specific test framework
+- `description`: Describe it as the testing specialist for the specific test framework. Emphasize it is the ONLY agent that runs tests.
 
 **System prompt MUST include the codegraph-scoped workflow:**
 
@@ -595,12 +573,33 @@ This gives you the exact list of spec files to write/update/run.
 
 Replace `{test_glob}` with the project's test file pattern (e.g., `e2e/*`, `__tests__/*`, `*_test.go`).
 
+**System prompt MUST include e2e test efficiency guidance (prevents debug spirals):**
+
+```
+## CRITICAL: Write tests efficiently
+
+Do NOT enter a debug spiral of run → fail → curl → edit → re-run × 10.
+
+### Before writing tests
+1. Curl/fetch the page first to see the actual rendered HTML selectors
+2. Read an existing spec file for selector patterns and test conventions
+3. Write tests that match the ACTUAL HTML, not what you think it should be
+
+### If a test fails
+- Read the error message carefully — it usually tells you exactly what's wrong
+- If a selector doesn't match, curl the page ONCE to check the actual HTML
+- Fix and re-run. Max 2 debug cycles per test. If still failing, simplify the assertion.
+```
+
+For web projects, also add `waitUntil: 'domcontentloaded'` (never `networkidle`) to the testing guidance.
+
 **System prompt should also instruct the agent to:**
 - Read 2-3 existing test files to match the project's test style
 - Read the changed source files to understand expected behavior
 - Write/update ONLY the affected test files
 - Run ONLY the affected tests, not the full suite
-- Fix failures and re-run until green
+- Fix failures and re-run until green (max 2 debug cycles per test)
+- If failures are caused by implementation bugs (not test bugs), report back to the orchestrator so the coder can fix — don't try to work around implementation issues in tests
 - Focus on meaningful assertions, not just coverage padding
 - Use the project's existing test utilities, fixtures, and helpers
 - Update its memory with test patterns and common failure modes
@@ -840,20 +839,22 @@ This project uses specialized AI agents in `.claude/agents/`. **ALWAYS delegate 
 | Step | Agent | Purpose | Invoke |
 |------|-------|---------|--------|
 | 1 | **architect** | Plan before implementing — scope affected files, trade-offs, risks | `@architect` |
-| 2 | **coder** | Write/edit code following project conventions and the architect's plan | `@coder` |
-| 3 | **reviewer** | Review the diff for {review priorities from Batch 2 Q1} | `@reviewer` |
-| 4 | **tester** | Write and run {test framework} tests for affected files | `@tester` |
-| 5 | **design-qa** | Visual QA — screenshot at {viewports} and inspect | `@design-qa` |
+| 2 | **coder** | Write/edit code following project conventions (does NOT run tests) | `@coder` |
+| 3 | **tester** | Write/run {test framework} tests, report failures back to coder | `@tester` |
+| 4 | **reviewer** | Review the diff for {review priorities from Batch 2 Q1} | `@reviewer` |
+| 5 | **design-qa** | Visual QA — screenshot at {viewports} and inspect (NO test running) | `@design-qa` |
 
 ### Workflow
 
 For any feature, bug fix, or significant change:
 
 1. **Plan** → `@architect` analyzes the request, identifies affected files, and produces an implementation plan
-2. **Implement** → `@coder` writes code following the architect's plan and project conventions
-3. **Review** → `@reviewer` checks the diff for issues
-4. **Test** → `@tester` writes/updates tests and runs them until green
-5. **Visual QA** → `@design-qa` screenshots affected pages and inspects (UI changes only)
+2. **Implement** → `@coder` writes code following the architect's plan and project conventions. Runs linter only — does NOT run tests.
+3. **Test** → `@tester` writes/updates tests and runs them. If tests fail due to implementation bugs, report back so coder can fix → re-test loop until green.
+4. **Review** → `@reviewer` checks the diff for {review priorities}
+5. **Visual QA** → `@design-qa` takes screenshots only — NO test running. Inspects for layout/responsive issues. (UI changes only)
+
+**Important:** Only the `@tester` agent runs tests. The `@coder` runs the linter only. The `@design-qa` takes screenshots only. This prevents redundant Playwright usage across agents.
 
 **Always start with the architect.** Even for seemingly simple changes, the architect identifies affected files, edge cases, and test requirements that are easy to miss when jumping straight to code.
 
@@ -990,18 +991,16 @@ echo "=== Agent Reminder ==="
 echo "INSTRUCTION: Delegate to the right agent. Do not do the work directly."
 echo ""
 
-workflow=""
 for f in "$agents_dir"/*.md; do
   [ -f "$f" ] || continue
   name=$(basename "$f" .md)
   desc=$(awk '/^---$/,/^---$/{if(/^description:/){sub(/^description: */, ""); print; exit}}' "$f")
   printf "  @%-14s — %s\n" "$name" "$desc"
-  workflow="${workflow:+$workflow → }@$name"
 done
 
 echo ""
-echo "Workflow: $workflow"
-echo "Start with the first agent for any feature, fix, or significant change."
+echo "Workflow: @architect → @coder → @tester (loop with coder if failures) → @reviewer → @design-qa (screenshots only)"
+echo "Only @tester runs tests. @design-qa takes screenshots only."
 echo "=== End Agent Reminder ==="
 ```
 
@@ -1057,11 +1056,9 @@ Adjust paths to match the actual installation location (project `.claude/hooks/`
 
 ---
 
-### Generate Verify Script — Stop Hook (ALWAYS generate this)
+### Generate Verify Script (ALWAYS generate this)
 
-This is NOT optional — generate it for every project that has a test framework. The verify script is a hard gate that runs when Claude finishes a task. It catches anything the agents missed by running the actual affected tests before Claude reports "done."
-
-Unlike agents, this is a shell script — it doesn't forget, doesn't drift, and doesn't get distracted. It's the safety net under the whole workflow.
+This is NOT optional — generate it for every project that has a test framework. The verify script is a utility that the **tester agent** runs to identify and execute affected tests. It is NOT a Stop hook — running it on every response is wasteful and slow. Instead, the tester agent calls it as part of its workflow.
 
 #### What it does
 
@@ -1070,12 +1067,12 @@ Unlike agents, this is a shell script — it doesn't forget, doesn't drift, and 
 3. Uses CodeGraph (if available) to trace which test files are affected by the source changes — including transitive dependencies not in the diff
 4. Falls back to file pattern matching if CodeGraph isn't available
 5. Runs ONLY the affected tests — never the full suite
-6. **Blocks Claude if tests fail** — prints an error message telling it to fix the failures
+6. Reports pass/fail results
 7. Prints a remaining checklist (linter, etc.)
 
 #### Create the script
 
-Write to `.claude/hooks/verify.sh` (or the global hooks dir). Make it executable (`chmod +x`).
+Write to `scripts/verify.sh` (or `.claude/hooks/verify.sh`). Make it executable (`chmod +x`).
 
 Tailor the script to the project's actual stack. Replace these placeholders with detected values:
 
@@ -1184,7 +1181,7 @@ if [ -n "$TEST_FILES" ]; then
     echo ""
     echo "Remaining checklist:"
     echo "  {linter_command}"
-    exit 2  # Exit code 2 = BLOCKING — prevents Claude from completing the task
+    exit 1
   else
     echo "✅ All affected tests passed."
   fi
@@ -1195,29 +1192,19 @@ echo "Remaining checklist:"
 echo "  {linter_command}"
 ```
 
-#### Register the Stop hook
+#### How the tester uses it
 
-Add to the same settings file where the other hooks were registered:
+The tester agent's system prompt should reference this script:
 
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/verify.sh"
-          }
-        ]
-      }
-    ]
-  }
-}
+```
+## Verify Script
+
+Run `scripts/verify.sh` (or `bash scripts/verify.sh`) to identify and run all affected tests.
+If tests fail and the failures are caused by implementation bugs (not test issues),
+report back to the orchestrator so the coder can fix.
 ```
 
-Merge into existing hooks — do NOT overwrite. If a Stop hook already exists, add alongside it.
+**Do NOT register this as a Stop hook.** Running tests on every response is wasteful — it runs even when editing config files or answering questions. The tester agent owns test execution as part of the workflow.
 
 ---
 
