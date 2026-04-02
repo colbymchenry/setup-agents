@@ -830,12 +830,16 @@ If the user selected extras in Batch 4 Q4, generate those too following the same
 
 Agents cannot spawn other agents via the `Agent` tool — this is a Claude Code limitation. Instead, the orchestrator spawns agents using `claude --agent <name> -p "prompt"` via the Bash tool. This loads the full agent definition from `.claude/agents/<name>.md` including system prompt, tool restrictions, and model settings.
 
-```bash
-# Spawns the architect agent with its full definition
-claude --agent architect -p "Plan the search feature. Read src/search.ts. Requirements: ..."
+**Critical:** Agents that write code (coder, tester) need `--permission-mode acceptEdits` or they silently fail to make changes in non-interactive `-p` mode. Read-only agents (architect, reviewer) don't need this.
 
-# Spawns the coder agent with its full definition  
-claude --agent coder -p "Implement the search feature. Read src/search.ts. Changes: ..."
+```bash
+# Read-only agents — no permission flag needed
+claude --agent architect -p "Plan the search feature. Read src/search.ts. Requirements: ..."
+claude --agent reviewer -p "Review changes to src/search.ts. Focus on security and performance."
+
+# Agents that edit files — MUST include --permission-mode acceptEdits
+claude --agent coder -p "Implement the search feature. Read src/search.ts. Changes: ..." --permission-mode acceptEdits
+claude --agent tester -p "Write tests for the search feature. Changed files: ..." --permission-mode acceptEdits
 ```
 
 Each spawned agent runs as an independent CLI session with:
@@ -849,8 +853,8 @@ Each spawned agent runs as an independent CLI session with:
 1. **Receive the task** from the main session
 2. **Run the workflow** by spawning agents via `claude --agent <name> -p` in sequence:
    - `claude --agent architect -p "..."` — plan the implementation
-   - `claude --agent coder -p "..."` — implement the plan
-   - `claude --agent tester -p "..."` — write/run tests. If tests fail due to implementation bugs, send failures back to coder to fix, then re-test. **Max 2 loops.**
+   - `claude --agent coder -p "..." --permission-mode acceptEdits` — implement the plan
+   - `claude --agent tester -p "..." --permission-mode acceptEdits` — write/run tests. If tests fail due to implementation bugs, send failures back to coder to fix, then re-test. **Max 2 loops.**
    - `claude --agent reviewer -p "..."` — review the final diff
    - `claude --agent design-qa -p "..."` — screenshot and inspect (UI changes only, skip for backend-only)
 3. **Handle the coder ↔ tester loop** internally — this is the key advantage. The loop happens inside the orchestrator's context, not the user's.
