@@ -31,13 +31,14 @@ Claude Code is powerful, but it's a generalist. When you ask it to plan, code, r
 ├── agents/
 │   ├── architect.md    ← Plans before code gets written
 │   ├── coder.md        ← Implements following your conventions
+│   ├── tester.md       ← Writes & runs tests (the ONLY agent that runs tests)
 │   ├── reviewer.md     ← Reviews with your priorities in mind
-│   ├── tester.md       ← Writes & runs tests that matter
 │   └── design-qa.md    ← Visual QA via screenshots (web + mobile)
-└── hooks/
-    ├── git-context.sh    ← Branch-aware git history on session start
-    ├── agent-reminder.sh ← Agent nudge on every prompt
-    └── verify.sh         ← Runs affected tests before task completion
+├── hooks/
+│   ├── git-context.sh    ← Branch-aware git history on session start (optional)
+│   └── agent-reminder.sh ← Agent nudge on every prompt (always installed)
+└── scripts/
+    └── verify.sh         ← Finds & runs affected tests (called by tester agent)
 ```
 
 Each agent is a markdown file with its own **system prompt**, **tool restrictions**, **model choice**, and **persistent memory**. The hooks keep Claude on track — injecting project context and reminding it to delegate. Everything is fully editable.
@@ -109,22 +110,21 @@ Pick an agent and test it with a real task before you leave the session.
 
 Agents can't see what they're building — unless you give them eyes.
 
-The **design-qa agent** handles visual verification. After the coder finishes, design-qa screenshots affected pages at multiple viewports, reads the images, and audits layout, responsive behavior, typography, and accessibility.
+The **design-qa agent** handles visual verification. After the tester confirms tests pass, design-qa screenshots affected pages at multiple viewports, reads the images, and audits layout, responsive behavior, typography, and accessibility. It takes screenshots only — it does NOT run tests.
 
-**Web projects** use Playwright screenshots. **Mobile projects** use Maestro + simulator/emulator screenshots (iOS Simulator or Android Emulator).
+**Web projects** use inline Playwright scripts with `domcontentloaded` (never `networkidle`). **Mobile projects** use Maestro + simulator/emulator screenshots (iOS Simulator or Android Emulator).
 
 ```
- ┌─────────┐     ┌────────────┐     ┌──────────┐     ┌────────┐
- │ Coder   │────▶│ Design QA  │────▶│ Inspect  │────▶│ Issues │
- │ finishes│     │ screenshots│     │ visually │     │found?  │
- └─────────┘     └────────────┘     └──────────┘     └───┬────┘
-                       ▲                                  │
-                       │            ┌──────────┐          │
-                       │       No   │  ✓ Done  │◀─────────┤
-                       │            └──────────┘     All clear
-                       │                                  │
-                       └──────────────────────────────────┘
-                              Yes — Coder fixes, loop again
+                    ┌───────────────────────────┐
+                    │         Feedback loop      │
+                    ▼                            │
+ ┌──────────┐  ┌────────┐  ┌────────┐  ┌───────┴──┐  ┌──────────┐  ┌──────────┐
+ │Architect │─▶│ Coder  │─▶│ Tester │─▶│ Failures?│  │ Reviewer │─▶│Design QA │
+ │ plans    │  │ writes │  │ tests  │  └──────────┘  │ reviews  │  │screenshots│
+ └──────────┘  └────────┘  └────────┘    │     │     └──────────┘  └──────────┘
+                    ▲                    Yes    No
+                    │                    │      │
+                    └────────────────────┘      └──────────────────▶
 ```
 
 <br>
@@ -144,27 +144,26 @@ Changed a utility? CodeGraph finds every test, component, and module that transi
 
 ## Session Hooks
 
-Agents only work if Claude actually uses them. Setup Agents solves this with three layers:
+Agents only work if Claude actually uses them. Setup Agents solves this with two layers:
 
 | Layer | When | What it does |
 |:------|:-----|:-------------|
 | **CLAUDE.md** | Loaded every session | Agent workflow table + delegation instructions |
-| **`git-context.sh`** | Session start | Injects branch-aware git history, diff stats, and working directory state |
 | **`agent-reminder.sh`** | Every prompt | Reminds Claude of available agents and the delegation workflow |
-| **`verify.sh`** | Task completion | Runs affected tests and blocks if they fail |
+| **`git-context.sh`** | Session start (optional) | Injects branch-aware git history, diff stats, and working directory state |
 
-The `SessionStart` hook gives Claude immediate project awareness — which branch you're on, recent commits, and what's been changed. It's smart about branches:
+The `agent-reminder.sh` hook is foundational — it's always installed. It dynamically reads your agent files and injects a brief reminder before every message, so Claude never drifts from the delegation workflow mid-session.
+
+The `git-context.sh` hook is optional. If installed, it gives Claude immediate project awareness — which branch you're on, recent commits, and what's been changed. It's smart about branches:
 
 - **On main/master/develop** — shows the last 10 commits
 - **On a feature branch** — shows all branch commits since diverging, plus `git diff --stat` for scope
 - **Just branched** — shows the base branch's last 10 commits
 - **Working directory** — shows `git status --short` with staged/unstaged markers and file count
 
-The `UserPromptSubmit` hook dynamically reads your agent files and injects a brief reminder before every message, so Claude never drifts from the delegation workflow mid-session.
+The `verify.sh` script finds changed files, traces affected tests via CodeGraph (or falls back to file pattern matching), and runs only those tests. It's called by the **tester agent** as part of the workflow — not as a Stop hook, which would wastefully run on every response.
 
-The `Stop` hook is the safety net. When Claude finishes a task, `verify.sh` finds every changed file, traces affected tests via CodeGraph (or falls back to file pattern matching), and runs only those tests. If anything fails, Claude is blocked from reporting done until it fixes the failures. This is a shell script, not an agent — it doesn't forget, doesn't drift, and doesn't skip steps.
-
-All hooks are fully editable in `.claude/hooks/`.
+All hooks and scripts are fully editable.
 
 <br>
 
@@ -190,10 +189,26 @@ All hooks are fully editable in `.claude/hooks/`.
 <br>
 
 - Full tool access (Read, Edit, Write, Bash)
+- Uses CodeGraph exploration tools to understand code structure before editing
 - Follows your detected code style, linter rules, naming conventions
 - Reads neighboring files to match existing patterns
-- Runs your formatter after writing code
+- Runs your linter/formatter after writing code — does NOT run tests
 - Follows your commit conventions
+
+</details>
+
+<details>
+<summary><b>Tester</b> — The only agent that runs tests</summary>
+
+<br>
+
+- Full tool access
+- The ONLY agent that runs tests — coder and design-qa do not
+- Scopes to affected test files via CodeGraph (never runs the full suite)
+- Curls pages first to see actual rendered HTML before writing tests
+- Max 2 debug cycles per test — prevents debug spirals
+- If failures are implementation bugs, reports back to coder for a fix loop
+- Uses `domcontentloaded` (never `networkidle`) for web projects
 
 </details>
 
@@ -203,25 +218,12 @@ All hooks are fully editable in `.claude/hooks/`.
 <br>
 
 - Read-only tools
+- Reviews after tests pass (coder → tester loop completes first)
+- Uses CodeGraph impact analysis to assess blast radius of changes
 - Checks against your stated priorities (security, performance, readability, consistency)
 - Looks for stack-specific anti-patterns
-- Verifies affected tests were updated via CodeGraph
 - Categorizes findings: blockers, suggestions, nits
 - Actionable feedback — "change X to Y because Z"
-
-</details>
-
-<details>
-<summary><b>Tester</b> — Writes & runs only the tests that matter</summary>
-
-<br>
-
-- Full tool access
-- Scopes to affected test files via CodeGraph (never runs the full suite)
-- Reads existing tests to match your project's test style
-- Writes meaningful assertions, not coverage padding
-- Fixes failures and re-runs until green
-- Visual regression testing for UI projects
 
 </details>
 
