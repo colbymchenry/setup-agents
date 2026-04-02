@@ -412,11 +412,26 @@ Include everything the agent needs: role, process, conventions, commands.}
 
 ---
 
-### Codegraph-scoped workflow (applies to ALL agents that touch tests or changed files)
+### Codegraph integration (applies to ALL agents when `.codegraph/` exists)
 
-If `.codegraph/` exists in the project, every agent that needs to identify affected files MUST use this pattern in their system prompt:
+If `.codegraph/` exists in the project, every agent's system prompt MUST include BOTH sections below. CodeGraph serves two purposes: **exploration** (understanding code structure) and **scoping** (finding affected files). Without the exploration tools, agents waste dozens of tool calls grepping blindly.
 
 ```
+## Exploration Tools — CodeGraph
+
+Use codegraph MCP tools for instant symbol lookups instead of grepping:
+
+| Tool | Use For |
+|------|---------|
+| `codegraph_search` | Find symbols by name (functions, classes, custom elements) |
+| `codegraph_context` | Get relevant code context for a task |
+| `codegraph_callers` | Find what calls a function |
+| `codegraph_callees` | Find what a function calls |
+| `codegraph_impact` | See what's affected by changing a symbol |
+| `codegraph_node` | Get details + source code for a symbol |
+
+Use these BEFORE reading files to understand the codebase structure. This saves tool calls vs. grepping blindly.
+
 ## Scoping — Only act on what changed
 
 Always start by determining which files are affected. Do NOT scan the full project.
@@ -434,7 +449,7 @@ This traces the full import/dependency graph — if you changed a utility, it fi
 test and component that transitively depends on it, even if they're not in the diff.
 ```
 
-If `.codegraph/` does NOT exist, agents should fall back to manual file mapping (git diff + known test file patterns).
+If `.codegraph/` does NOT exist, agents should fall back to manual file mapping (git diff + known test file patterns) and skip the exploration tools section.
 
 ---
 
@@ -450,8 +465,9 @@ If `.codegraph/` does NOT exist, agents should fall back to manual file mapping 
 - `description`: Include "Use proactively before implementing features" so Claude delegates planning automatically
 
 **System prompt should instruct the agent to:**
+- Use codegraph exploration tools (if available) to understand code structure — `codegraph_search` for symbols, `codegraph_impact` for blast radius, `codegraph_callers`/`codegraph_callees` to trace flow
 - Analyze the request and break it into components
-- Identify which files/modules will be affected (use codegraph tools if `.codegraph/` exists)
+- Identify which files/modules will be affected (use `codegraph affected` for transitive dependencies)
 - Consider architectural trade-offs specific to the project's patterns (from Batch 2 Q2)
 - Flag potential issues: breaking changes, performance concerns, security implications
 - Output a structured plan with: summary, affected files, approach, risks, and open questions
@@ -474,6 +490,7 @@ If `.codegraph/` does NOT exist, agents should fall back to manual file mapping 
 - `description`: Describe it as the implementation specialist for this specific stack
 
 **System prompt should instruct the agent to:**
+- Use codegraph exploration tools (if available) to understand code structure BEFORE reading files blindly
 - Follow the project's detected code style (linter rules, formatting, naming conventions)
 - Use the project's actual framework patterns and idioms
 - Reference specific conventions from CLAUDE.md if they exist
@@ -481,10 +498,33 @@ If `.codegraph/` does NOT exist, agents should fall back to manual file mapping 
 - Include the project's type system conventions
 - Handle errors following the project's existing patterns
 - NOT add unnecessary abstractions, comments, or over-engineering
+- Run `git diff` to self-review changes before running linter/tests — catches typos, accidental deletions, and scope creep
 - Run the project's linter/formatter after writing code if available
 - Follow the commit conventions chosen in Batch 2 Q4
 - If user chose "Undercover mode" in Batch 2 Q5: never include "Co-Authored-By" trailers mentioning Claude/AI, never mention AI assistance in commit messages or PR descriptions, write commits and PRs as if a human authored them
 - Update its memory with codebase patterns and conventions discovered
+
+**E2E test guidance (if the project has e2e tests):**
+
+The coder's system prompt MUST include guidance to prevent test debugging spirals. Without this, coders waste 40+ tool calls guessing at selectors and retrying:
+
+```
+## E2E Testing
+
+CRITICAL: Write tests efficiently. Do NOT enter a debug spiral of run → fail → edit → re-run.
+
+### Before writing tests
+1. Curl/fetch the page first to see the actual rendered HTML selectors
+2. Read an existing spec file for selector patterns and test conventions
+3. Write tests that match the ACTUAL HTML, not what you think it should be
+
+### If a test fails
+- Read the error message carefully — it usually tells you exactly what's wrong
+- If a selector doesn't match, curl the page ONCE to check the actual HTML
+- Fix and re-run. Max 2 debug cycles per test. If still failing, simplify the assertion.
+```
+
+For web projects, also add `waitUntil: 'domcontentloaded'` (never `networkidle`) to the testing guidance.
 
 **Note:** The coder does NOT do visual verification. That is the design-qa agent's job. The coder writes code; design-qa screenshots and inspects.
 
@@ -502,6 +542,7 @@ If `.codegraph/` does NOT exist, agents should fall back to manual file mapping 
 - `description`: Include "Use proactively after code changes" so Claude auto-delegates reviews
 
 **System prompt should instruct the agent to:**
+- Use codegraph exploration tools (if available) for impact analysis — `codegraph_impact` on changed symbols to assess blast radius, `codegraph_callers` to find what depends on changed code
 - Use the codegraph-scoped workflow to identify all affected files from the diff
 - Run `git diff` to see recent changes, or review specified files
 - Check against the user's stated priorities from Batch 2 Q1 (security, performance, readability, consistency)
