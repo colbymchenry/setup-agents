@@ -1149,6 +1149,7 @@ echo "=== Agent Reminder ==="
 echo "For features, bug fixes, or significant changes → delegate to @orchestrator"
 echo "It runs the full pipeline (architect → coder → tester → reviewer → design-qa) and returns a concise summary."
 echo "Direct access: @architect @coder @tester @reviewer @design-qa"
+echo "For quick questions or git ops → handle directly"
 echo "=== End Agent Reminder ==="
 ```
 
