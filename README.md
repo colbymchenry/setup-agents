@@ -39,6 +39,7 @@ Claude Code is powerful, but it's a generalist. When you ask it to plan, code, r
 │   ├── git-context.sh    ← Branch-aware git history on session start (optional)
 │   └── agent-reminder.sh ← Points Claude to @orchestrator (always installed)
 └── scripts/
+    ├── run-agent.sh      ← Spawns agents with real-time tool call feedback
     └── verify.sh         ← Finds & runs affected tests (called by tester agent)
 ```
 
